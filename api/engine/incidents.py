@@ -55,6 +55,9 @@ class IncidentRecord:
     last_streak_check: datetime | None = None
     # Money accrues on the clock, not on the detector re-firing. See Detector._accrue_cost.
     last_cost_at: datetime | None = None
+    # The recent-history half of p0, measured before this incident started. Held still
+    # while the incident is open so the expectation cannot drift down onto the failure.
+    baseline_ewma: float | None = None
     last_attributed_at: datetime | None = None
     diagnosis: dict | None = None
     # Once an incident is over and its 30-minute tail has been recorded, its chart is

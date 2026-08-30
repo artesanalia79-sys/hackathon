@@ -75,7 +75,7 @@ class Detector:
 
     # --- main tick ---------------------------------------------------------
     def tick(self, now: datetime) -> None:
-        ex = Expector(self.cube)
+        ex = Expector(self.cube, frozen_ewma=self._frozen_ewma())
         fired = self._scan_conversion(ex, now)
         if fired:
             self._attribute_and_upsert(ex, now, fired)
@@ -83,6 +83,12 @@ class Detector:
         self._scan_no_traffic(ex, now)
         self._scan_latency(ex, now)
         self._lifecycle(ex, now)
+
+    def _frozen_ewma(self) -> list[tuple[tuple, float]]:
+        """Scopes whose recent-history baseline must not move: they have an open incident."""
+        return [(tuple(sorted(rec.scope.items())), rec.baseline_ewma)
+                for rec in self.open_incidents()
+                if rec.kind == "conversion_drop" and rec.baseline_ewma is not None]
 
     def _accrue_cost(self, ex: Expector, now: datetime) -> None:
         """Charge every open incident for the minute that just passed.
@@ -153,7 +159,7 @@ class Detector:
                 reasons.append(f"{nearby[0].type} at {nearby[0].ts:%H:%M}: {nearby[0].description}")
             # These are approvals we booked but never got: value at full risk.
             cost_min = (agg.raw_status_mismatch / WINDOW_SENSITIVE_MIN) * agg.avg_ticket
-            self._upsert(now, scope=scope, cause_type="mapping_bug", kind="data_integrity",
+            self._upsert(ex, now, scope=scope, cause_type="mapping_bug", kind="data_integrity",
                          expected_rate=seasonal.rate or 0.0, observed_rate=agg.rate or 0.0,
                          excess=float(agg.raw_status_mismatch), cost_min=cost_min,
                          cost_breakdown={"mis-stated approvals": round(cost_min, 2)},
@@ -179,7 +185,7 @@ class Detector:
             sig = build_signature(obs, sea)
             lost_per_min = (sea.attempts - obs.attempts) / WINDOW_SENSITIVE_MIN
             ticket = sea.avg_ticket
-            self._upsert(now, scope=scope, cause_type="no_traffic", kind="no_traffic",
+            self._upsert(ex, now, scope=scope, cause_type="no_traffic", kind="no_traffic",
                          expected_rate=sea.rate or 0.0, observed_rate=obs.rate or 0.0,
                          excess=float(sea.attempts - obs.attempts),
                          cost_min=lost_per_min * ticket * 0.5,
@@ -213,7 +219,7 @@ class Detector:
             extra_s = (now_lat - base_lat) / 1000.0
             abandon = min(0.25, 0.08 * extra_s)
             cost_min = abandon * (obs.attempts / WINDOW_SENSITIVE_MIN) * obs.avg_ticket
-            self._upsert(now, scope=scope, cause_type="latency_spike", kind="latency_spike",
+            self._upsert(ex, now, scope=scope, cause_type="latency_spike", kind="latency_spike",
                          expected_rate=exp.p0, observed_rate=obs.rate or 0.0,
                          excess=0.0, cost_min=cost_min,
                          cost_breakdown={"estimated abandonment": round(cost_min, 2)},
@@ -286,7 +292,7 @@ class Detector:
                 reasons.insert(0, f"conversion {exp.observed_rate:.1%} vs {exp.p0:.1%} expected "
                                   f"on {obs.operational_attempts} operational attempts "
                                   f"in the last {WINDOW_SENSITIVE_MIN} min")
-                self._upsert(now, scope=node.scope, cause_type=cause, kind="conversion_drop",
+                self._upsert(ex, now, scope=node.scope, cause_type=cause, kind="conversion_drop",
                              expected_rate=exp.p0, observed_rate=exp.observed_rate or 0.0,
                              excess=node.excess_declines, cost_min=cost_min,
                              cost_breakdown=breakdown, sig=sig, reasons=reasons,
@@ -329,7 +335,7 @@ class Detector:
         return onset
 
     # --- write path --------------------------------------------------------
-    def _upsert(self, now: datetime, *, scope: dict[str, str], cause_type: str, kind: str,
+    def _upsert(self, ex: Expector, now: datetime, *, scope: dict[str, str], cause_type: str, kind: str,
                 expected_rate: float, observed_rate: float, excess: float, cost_min: float,
                 cost_breakdown: dict, sig, reasons: list[str], confidence: float,
                 attribution: list, change_ids: list[str],
@@ -382,6 +388,9 @@ class Detector:
             attribution_json=attribution, reasons=reasons, confidence=confidence,
             related_change_event_ids=change_ids, detail=detail or {},
         )
+        if kind == "conversion_drop":
+            # Captured at the onset, before the incident had time to bend its own history.
+            rec.baseline_ewma = ex.ewma_rate(scope, rec.started_at, WINDOW_SENSITIVE_MIN)
         self.incidents[rec.id] = rec
         self.open_by_key[key] = rec.id
         self._log(now, "incident_opened", incident_id=rec.id, scope=scope,

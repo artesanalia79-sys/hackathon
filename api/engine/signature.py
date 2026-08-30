@@ -238,5 +238,14 @@ def classify(scope: dict[str, str], sig: Signature, ex: Expector, end: datetime,
         reasons.append(f"soft declines up on provider={scope['provider']}")
         return "provider_degraded", 0.55, reasons
 
-    reasons.append("no rule matched: the excess does not concentrate in a recognisable pattern")
+    # Attribution may well have isolated a scope; what failed is the *signature* — no rule
+    # recognised the shape of the declines. Saying "the excess does not concentrate
+    # anywhere" here contradicts the attribution panel sitting right above it on the card.
+    if pinned:
+        where = " · ".join(f"{d}={scope[d]}" for d in DIMENSIONS if d in scope)
+        moved = ", ".join(sig.risen) if sig.risen else "no decline category"
+        reasons.append(f"the excess does concentrate on {where}, but {moved} rose in a "
+                       f"combination that matches none of the known failure patterns")
+    else:
+        reasons.append("no rule matched: the excess does not concentrate in a recognisable pattern")
     return "insufficient_evidence", 0.3, reasons
