@@ -40,6 +40,11 @@ class Transaction(BaseModel):
     raw_message: str
     raw_status: str
     normalized_code: str
+    # The anchor and the action: every card acquirer speaks ISO 8583, and `retriable`
+    # is what turns a decline into a decision. Empty ISO means the canonical code has
+    # no card-network equivalent (an alternative rail, or a Yuno-only code).
+    iso_8583: str = ""
+    retriable: str = "unknown"
     decline_category: DeclineCategory
     latency_ms: int
     attempt_no: int = 1

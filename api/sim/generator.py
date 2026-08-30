@@ -17,7 +17,7 @@ from api.engine.cube import LeafKey, LeafMinute
 from api.engine.stats import sample_binomial, sample_multinomial, sample_poisson
 from api.sim import catalog as cat
 from api.sim.injector import Injector
-from api.sim.mapping import normalize, novel_code, pick_raw_code
+from api.sim.mapping import canonical_meta, normalize, novel_code, pick_raw_code
 
 SAMPLE_TX_PER_MINUTE = 12
 
@@ -203,7 +203,7 @@ class Generator:
             normalized_code, status, norm_category = normalize(provider, raw_code)
             # Reproduce the mapping bug at row level so the UI can show the disagreement.
             if eff.mismap_fraction > 0 and status != "approved" and rng.random() < eff.mismap_fraction:
-                status, norm_category, normalized_code = "approved", "none", "approved"
+                status, norm_category, normalized_code = "approved", "none", "APPROVED"
             issuer = leaf["issuer"] or None
             out.append(Transaction(
                 id=f"tx_{uuid.uuid4().hex[:12]}", ts=minute, merchant_id=leaf["merchant"],
@@ -213,7 +213,10 @@ class Generator:
                 method=leaf["method"], provider=provider, brand=leaf["brand"] or None,
                 issuer=issuer, bin=cat.BIN_PREFIX.get(issuer or "", None),
                 status=status, raw_code=raw_code, raw_message=raw_msg, raw_status=raw_status,
-                normalized_code=normalized_code, decline_category=norm_category,
+                normalized_code=normalized_code,
+                iso_8583=canonical_meta(normalized_code)[0],
+                retriable=canonical_meta(normalized_code)[1],
+                decline_category=norm_category,
                 latency_ms=int(self.latency[i] * eff.latency_factor * rng.uniform(0.7, 1.6)),
             ))
         return out
