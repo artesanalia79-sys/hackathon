@@ -23,6 +23,8 @@ def status() -> dict:
             "min_cost_per_min_usd": SLACK_ALERT_MIN_COST_PER_MIN,
             "alerts_sent": len(w.slack_sent),
             "incident_ids": sorted(w.slack_sent),
+            "raised_by": {r.id: r.alerted_by for r in w.detector.incidents.values()
+                          if r.alerted_at is not None},
         },
         "public_base_url": PUBLIC_BASE_URL or None,
     }

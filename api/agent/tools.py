@@ -1,10 +1,14 @@
 """Tool implementations. Every one reads the same cube the engine decided on.
 
-There is no tool that writes anything. The agent cannot change production, cannot
-close an incident, and cannot reach a provider — by construction, not by prompt.
+Exactly one tool has an effect outside this process: `send_slack_alert`, which raises
+the incident in the on-call channel. It notifies people; it does not touch payments.
+The agent still cannot change routing, cannot close an incident and cannot reach a
+provider — by construction, not by prompt. That boundary is the point: interrupting a
+human is reversible by the human, moving live traffic is not.
 """
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 
 from api.config import WINDOW_SENSITIVE_MIN
@@ -12,13 +16,20 @@ from api.engine.cube import agg_to_json
 from api.engine.expectation import Expector
 from api.engine.incidents import IncidentRecord
 from api.engine.memory import find_similar_incidents
+from api.engine.playbook import build as build_playbook
 from api.engine.signature import build_signature
 
 MAX_ROWS = 12
 
 
+# The agent may narrate an alert; it may not price one. Same rule as the incident card.
+MONEY_IN_HEADLINE = re.compile(r"[$€£]\s*\d|\b\d[\d.,]*\s*(?:usd|dollars?|d[oó]lares)\b",
+                               re.IGNORECASE)
+
+
 class ToolBox:
     def __init__(self, detector, rec: IncidentRecord, now) -> None:
+        self.alerted = False
         self.detector = detector
         self.cube = detector.cube
         self.rec = rec
@@ -150,6 +161,50 @@ class ToolBox:
         rows.sort(key=lambda r: abs(r["minutes_from_incident_start"]))
         return {"window_minutes": w, "around": centre.isoformat(), "events": rows[:MAX_ROWS],
                 "count": len(rows)}
+
+    async def send_slack_alert(self, headline: str = "", urgency: str = "notify") -> dict:
+        """Raise this incident in the on-call channel. The one tool with an outside effect.
+
+        The agent decides whether an incident is worth interrupting a human for, and says
+        why in its own words. It still cannot write figures: the alert carries the
+        engine's numbers and the engine's recommended action, and a headline containing an
+        amount of money is refused rather than quietly stripped, so the model learns the
+        rule from the tool result instead of being silently overruled.
+        """
+        from api.config import PUBLIC_BASE_URL
+        from api.notify import slack
+
+        if not slack.enabled():
+            return {"sent": False,
+                    "error": "alerting is not configured on this deployment (no webhook). "
+                             "Continue and conclude; the incident card is unaffected."}
+        if self.alerted:
+            return {"sent": False,
+                    "error": "you already alerted on this incident in this run; one is enough"}
+        headline = (headline or "").strip()
+        if not headline:
+            return {"sent": False, "error": "headline is required: say what is wrong in one line"}
+        if MONEY_IN_HEADLINE.search(headline):
+            return {"sent": False,
+                    "error": "the headline states an amount of money. The engine attaches the "
+                             "cost itself — rewrite the headline without figures and call again."}
+        if urgency not in ("page", "notify", "fyi"):
+            urgency = "notify"
+
+        # The diagnosis does not exist yet — this call happens before `conclude` — so the
+        # recommendation is computed here rather than left as "see the incident card".
+        action, rationale = build_playbook(self.detector, self.rec, self.now)
+        payload = slack.build_agent_message(self.rec, headline, urgency,
+                                            self.rec.diagnosis, PUBLIC_BASE_URL,
+                                            action, rationale)
+        sent = await slack.send(payload)
+        if sent:
+            self.alerted = True
+            self.rec.alerted_at = self.now
+            self.rec.alerted_by = "agent"
+        return {"sent": sent, "urgency": urgency, "channel": "slack",
+                "note": ("delivered to the on-call channel with the engine's figures attached"
+                         if sent else "the webhook rejected it; the incident card is unaffected")}
 
     def find_similar_incidents(self) -> dict:
         matches = [{k: v for k, v in m.items() if k != "cost_usd"}

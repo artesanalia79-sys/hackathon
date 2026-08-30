@@ -125,6 +125,10 @@ async def run_agent(detector, rec: IncidentRecord, now: datetime,
             except Exception:
                 pass
 
+    from api.notify import slack as _slack
+    slack_on = _slack.enabled()
+    alert_prompted = False
+
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(AGENT_TIMEOUT_S)) as client:
             for step in range(AGENT_MAX_STEPS):
@@ -163,11 +167,40 @@ async def run_agent(detector, rec: IncidentRecord, now: datetime,
                                         arguments={}, error=f"unparsable arguments: {exc}"))
 
                     if name == "conclude":
+                        # Telling the model to alert before concluding is not enough on its
+                        # own — it reads `conclude` as the finish line and goes straight
+                        # there. So the decision is made structural: the first time it tries
+                        # to land a nameable cause without having decided about the alert,
+                        # it gets the turn back. Once. Concluding again *is* the decision
+                        # not to alert, and we let it stand.
+                        needs_alert_call = (slack_on and not box.alerted
+                                            and not alert_prompted
+                                            and args.get("root_cause_type")
+                                            not in (None, "", "insufficient_evidence"))
+                        if needs_alert_call:
+                            alert_prompted = True
+                            emit(run.record("alert_decision_requested", tool_call_id=call_id))
+                            messages.append({"role": "user", "content":
+                                             "Before you conclude: you have named a cause, and "
+                                             "nobody outside this system knows about it yet. "
+                                             "Call `send_slack_alert` if an operator should act "
+                                             "on this now, then conclude. If this genuinely does "
+                                             "not warrant interrupting anyone, just call "
+                                             "`conclude` again and it will stand."})
+                            continue
                         return _finish_conclude(detector, rec, run, args, call_id, emit, now)
                     if name == "insufficient_evidence":
                         return _finish_insufficient(detector, rec, run, args, call_id, emit)
 
-                    result = box.call(name, args)
+                    # The one tool that reaches outside this process is awaited rather
+                    # than run through the sync dispatcher, so a slow webhook cannot block
+                    # the event loop the rest of the simulation is running on.
+                    if name == "send_slack_alert":
+                        result = await box.send_slack_alert(
+                            headline=args.get("headline", ""),
+                            urgency=args.get("urgency", "notify"))
+                    else:
+                        result = box.call(name, args)
                     handle = run.handle_for(call_id)
                     run.call_ids.add(handle)
                     run.call_ids.add(call_id)

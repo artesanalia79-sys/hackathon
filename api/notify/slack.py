@@ -50,14 +50,21 @@ def _trim(text: str, limit: int = MAX_BLOCK_CHARS) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def build_message(rec: IncidentRecord, diagnosis: dict | None, base_url: str = "") -> dict:
-    """Block Kit payload. Pure function, so it can be tested without a network."""
+def build_message(rec: IncidentRecord, diagnosis: dict | None, base_url: str = "",
+                  action: str = "", rationale: str = "") -> dict:
+    """Block Kit payload. Pure function, so it can be tested without a network.
+
+    `action`/`rationale` override the diagnosis, for the case that has no diagnosis yet:
+    the agent raises the alert before it concludes, and an alert that says "see the
+    incident card" is the vagueness this whole layer exists to remove. The playbook is
+    deterministic and available at any point, so the caller can pass it in.
+    """
     cause = (diagnosis or {}).get("root_cause", {}).get("type") or rec.cause_type or "unknown"
     confidence = (diagnosis or {}).get("confidence", rec.confidence)
     source = (diagnosis or {}).get("source", "engine")
     rec_block = (diagnosis or {}).get("recommendation") or {}
-    action = rec_block.get("action") or "See the incident card."
-    rationale = rec_block.get("rationale") or ""
+    action = action or rec_block.get("action") or "See the incident card."
+    rationale = rationale or rec_block.get("rationale") or ""
     risen = ", ".join(rec.signature_json.get("risen") or []) or "—"
 
     headline = f"{cause.replace('_', ' ')} · {_scope_line(rec.scope)}"
@@ -91,6 +98,30 @@ def build_message(rec: IncidentRecord, diagnosis: dict | None, base_url: str = "
 
     return {"text": f"Confirmed incident: {headline} — ${rec.cost_per_min_usd:,.0f}/min",
             "blocks": blocks}
+
+
+URGENCY_ICON = {"page": ":rotating_light:", "notify": ":warning:", "fyi": ":information_source:"}
+
+
+def build_agent_message(rec: IncidentRecord, headline: str, urgency: str,
+                        diagnosis: dict | None, base_url: str = "",
+                        action: str = "", rationale: str = "") -> dict:
+    """The agent's alert: its words on top, the engine's numbers underneath.
+
+    The agent decides whether this incident is worth interrupting someone for, and says
+    why in its own sentence. It still does not get to write the figures — those are read
+    off the record here, the same rule that governs the incident card.
+    """
+    payload = build_message(rec, diagnosis, base_url, action, rationale)
+    icon = URGENCY_ICON.get(urgency, ":warning:")
+    payload["text"] = f"{icon} {_trim(headline, 300)}"
+    payload["blocks"].insert(1, {
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": f"{icon} {_trim(headline, 1500)}"},
+    })
+    payload["blocks"].append({"type": "context", "elements": [
+        {"type": "mrkdwn", "text": ":robot_face: Raised by the diagnosis agent."}]})
+    return payload
 
 
 def should_alert(rec: IncidentRecord) -> bool:

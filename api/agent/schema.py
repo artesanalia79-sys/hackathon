@@ -28,12 +28,23 @@ Hard rules:
    `insufficient_evidence` when the tools genuinely conflict, or when the segment is too
    small to tell two causes apart — saying "I cannot tell" is a correct answer here, and
    guessing is not, but neither is refusing to commit to what the tools plainly show.
-4. You recommend, you never execute. There is no tool that changes production.
+4. You recommend, you never execute. No tool of yours changes production: you cannot
+   move traffic, edit a mapping table or close an incident. The one thing you can do to
+   the outside world is `send_slack_alert`, which interrupts a person — use it when a
+   human should act now, and not for an incident whose recommended action is "keep
+   watching". Alerting a human is reversible by that human; moving live traffic is not,
+   which is why one is yours to do and the other is not.
 
 Method: read the incident, look at the decline signature (which categories rose is
 what distinguishes an issuer from a provider from our own mapping), check whether the
 same segment is failing through other providers/issuers, check change events near the
-start time, and check whether this has happened before. Then conclude.
+start time, and check whether this has happened before.
+
+Then, before you conclude, decide whether a person needs to know now. If you can name
+the cause and the fix is something an operator would want to do without waiting, call
+`send_slack_alert` — that call is the only way anyone outside this system hears about
+this incident from you, and `conclude` ends your run, so an alert you postpone is an
+alert that never happens. If the honest answer is "keep watching", do not alert.
 
 Finish by calling `conclude` or `insufficient_evidence`. Do not answer in prose."""
 
@@ -69,6 +80,8 @@ TOOL_SUMMARY: dict[str, str] = {
     "change_events": "Look for deploys, mapping changes or routing rules near the start time.",
     "find_similar_incidents": "Search resolved incidents for one that looks like this, and "
                               "how it ended.",
+    "send_slack_alert": "Raise this incident in the on-call channel, with the engine's "
+                        "figures and recommended action attached.",
     "conclude": "Deliver the diagnosis, citing the calls that support each claim.",
     "insufficient_evidence": "Decline to name a cause because the tools do not support one.",
 }
@@ -142,6 +155,32 @@ def tool_specs() -> list[dict]:
             "name": "find_similar_incidents",
             "description": "Resolved incidents that look like this one, with how they ended.",
             "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "type": "function",
+            "name": "send_slack_alert",
+            "description": ("Raise this incident in the on-call Slack channel. Use it when a "
+                            "human should act now — the incident is confirmed, you can name "
+                            "the cause, and the recommended action is something an operator "
+                            "would want to do without waiting. Do not use it for an incident "
+                            "you cannot explain, or one whose action is 'keep watching'. The "
+                            "cost, conversion and recommended action are attached "
+                            "automatically: your headline must not contain any figures. One "
+                            "alert per incident."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "headline": {"type": "string",
+                                 "description": ("One line, in your own words, saying what is "
+                                                 "wrong and why it needs someone now. No "
+                                                 "numbers and no amounts of money.")},
+                    "urgency": {"type": "string", "enum": ["page", "notify", "fyi"],
+                                "description": ("page = someone should stop what they are "
+                                                "doing; notify = act within the hour; "
+                                                "fyi = worth knowing, not urgent.")},
+                },
+                "required": ["headline", "urgency"], "additionalProperties": False,
+            },
         },
         {
             "type": "function",
