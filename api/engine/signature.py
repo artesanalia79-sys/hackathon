@@ -167,6 +167,14 @@ def classify(scope: dict[str, str], sig: Signature, ex: Expector, end: datetime,
     if sig.mismatch_rate >= MISMATCH_RATE_ALERT:
         reasons.append(f"{sig.mismatch_rate:.1%} of decisions were stored with a status the "
                        f"provider did not return")
+        # Two ways to disagree, and they take opposite fixes. If the disagreeing rows are
+        # also carrying codes we do not map, nothing was rolled out wrong - the table is
+        # simply incomplete, and the action is to map the code, not to revert a change.
+        if sig.unknown_share >= UNKNOWN_SHARE_ALERT and sig.unmapped_codes:
+            codes = ", ".join(sig.unmapped_codes[:3])
+            reasons.append(f"the disagreeing rows carry codes we do not map ({codes}): the "
+                           f"provider answered, we could not read the answer")
+            return "unmapped_provider_code", 0.9, reasons
         if nearby:
             reasons.append(f"a {nearby[0].type} landed within {CHANGE_WINDOW_MIN} min: {nearby[0].description}")
         return "mapping_bug", 0.95 if nearby else 0.85, reasons
@@ -238,5 +246,14 @@ def classify(scope: dict[str, str], sig: Signature, ex: Expector, end: datetime,
         reasons.append(f"soft declines up on provider={scope['provider']}")
         return "provider_degraded", 0.55, reasons
 
-    reasons.append("no rule matched: the excess does not concentrate in a recognisable pattern")
+    # Attribution may well have isolated a scope; what failed is the *signature* — no rule
+    # recognised the shape of the declines. Saying "the excess does not concentrate
+    # anywhere" here contradicts the attribution panel sitting right above it on the card.
+    if pinned:
+        where = " · ".join(f"{d}={scope[d]}" for d in DIMENSIONS if d in scope)
+        moved = ", ".join(sig.risen) if sig.risen else "no decline category"
+        reasons.append(f"the excess does concentrate on {where}, but {moved} rose in a "
+                       f"combination that matches none of the known failure patterns")
+    else:
+        reasons.append("no rule matched: the excess does not concentrate in a recognisable pattern")
     return "insufficient_evidence", 0.3, reasons

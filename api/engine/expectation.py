@@ -33,10 +33,14 @@ class Expectation:
 class Expector:
     """Caches aggregates within a single evaluation pass — attribution asks a lot."""
 
-    def __init__(self, cube: Cube) -> None:
+    def __init__(self, cube: Cube,
+                 frozen_ewma: list[tuple[tuple, float]] | None = None) -> None:
         self.cube = cube
         self._obs: dict[tuple, Agg] = {}
         self._sea: dict[tuple, Agg] = {}
+        # (scope items, rate) for scopes covered by an open incident. Most specific first,
+        # so a scope inside two open incidents takes the narrower one's baseline.
+        self._frozen = sorted(frozen_ewma or [], key=lambda f: -len(f[0]))
 
     @staticmethod
     def _key(scope: dict[str, str], end: datetime, minutes: int) -> tuple:
@@ -60,7 +64,17 @@ class Expector:
         return hit
 
     def ewma_rate(self, scope: dict[str, str], end: datetime, exclude_minutes: int) -> float | None:
-        """Recent healthy level, measured strictly before the window under test."""
+        """Recent healthy level, measured strictly before the window under test.
+
+        While an incident is open on this scope the value is held at what it was when
+        the incident started. Left free, the 2-hour window swallows the incident itself:
+        the expectation walks down onto the failure, the measured excess shrinks, and the
+        money on the card falls without anything getting better. Measured over five
+        simulated hours on an unchanged injection, $/min drifted down 41%.
+        """
+        for items, rate in self._frozen:
+            if all(scope.get(k) == v for k, v in items):
+                return rate
         cutoff = end - timedelta(minutes=exclude_minutes)
         agg = self.observed(scope, cutoff, EWMA_HOURS * 60)
         return agg.rate

@@ -75,7 +75,7 @@ class Detector:
 
     # --- main tick ---------------------------------------------------------
     def tick(self, now: datetime) -> None:
-        ex = Expector(self.cube)
+        ex = Expector(self.cube, frozen_ewma=self._frozen_ewma())
         fired = self._scan_conversion(ex, now)
         if fired:
             self._attribute_and_upsert(ex, now, fired)
@@ -83,6 +83,40 @@ class Detector:
         self._scan_no_traffic(ex, now)
         self._scan_latency(ex, now)
         self._lifecycle(ex, now)
+
+    def _frozen_ewma(self) -> list[tuple[tuple, float]]:
+        """Scopes whose recent-history baseline must not move: they have an open incident."""
+        return [(tuple(sorted(rec.scope.items())), rec.baseline_ewma)
+                for rec in self.open_incidents()
+                if rec.kind == "conversion_drop" and rec.baseline_ewma is not None]
+
+    def _accrue_cost(self, ex: Expector, now: datetime) -> None:
+        """Charge every open incident for the minute that just passed.
+
+        Money accrues on the clock, not on the detector re-firing. Accruing inside
+        `_upsert` instead meant an incident only cost money on the ticks where it
+        happened to fire again in the 5-minute window: a confirmed incident that went
+        quiet kept bleeding while its total stood still.
+
+        An incident that did not fire this minute is re-priced from the live window
+        first, so it neither coasts on a stale rate while it recovers nor stops
+        counting while it is still broken.
+        """
+        for rec in self.open_incidents():
+            if rec.last_seen_at < now and rec.kind == "conversion_drop":
+                exp = ex.expect(rec.scope, now, WINDOW_SENSITIVE_MIN)
+                cost_min, breakdown = cost_per_minute(
+                    ex.observed(rec.scope, now, WINDOW_SENSITIVE_MIN),
+                    ex.seasonal(rec.scope, now, WINDOW_SENSITIVE_MIN),
+                    exp.excess_declines, WINDOW_SENSITIVE_MIN)
+                rec.cost_per_min_usd = cost_min
+                rec.cost_breakdown = breakdown
+            since = rec.last_cost_at or rec.started_at
+            minutes = (now - since).total_seconds() / 60.0
+            if minutes <= 0:
+                continue
+            rec.cost_usd += rec.cost_per_min_usd * minutes
+            rec.last_cost_at = now
 
     # --- scans -------------------------------------------------------------
     def _scan_conversion(self, ex: Expector, now: datetime) -> list[dict[str, str]]:
@@ -121,15 +155,25 @@ class Detector:
             nearby = related_change_events(self.change_events, scope, now)
             reasons = [(f"{rate:.1%} of {provider} decisions were stored with a status the "
                        f"provider did not return ({agg.raw_status_mismatch} of {agg.attempts} attempts)")]
+            # Same disagreement, two opposite fixes. Codes we cannot map mean the table is
+            # incomplete — map the code. A clean mapping that still disagrees means
+            # something we shipped is wrong — roll it back.
+            cause = "mapping_bug"
+            confidence = 0.95 if nearby else 0.85
+            if sig.unmapped_codes:
+                cause = "unmapped_provider_code"
+                confidence = 0.9
+                reasons.append(f"the disagreeing rows carry codes we do not map "
+                               f"({', '.join(sig.unmapped_codes[:3])})")
             if nearby:
                 reasons.append(f"{nearby[0].type} at {nearby[0].ts:%H:%M}: {nearby[0].description}")
             # These are approvals we booked but never got: value at full risk.
             cost_min = (agg.raw_status_mismatch / WINDOW_SENSITIVE_MIN) * agg.avg_ticket
-            self._upsert(now, scope=scope, cause_type="mapping_bug", kind="data_integrity",
+            self._upsert(ex, now, scope=scope, cause_type=cause, kind="data_integrity",
                          expected_rate=seasonal.rate or 0.0, observed_rate=agg.rate or 0.0,
                          excess=float(agg.raw_status_mismatch), cost_min=cost_min,
                          cost_breakdown={"mis-stated approvals": round(cost_min, 2)},
-                         sig=sig, reasons=reasons, confidence=0.95 if nearby else 0.85,
+                         sig=sig, reasons=reasons, confidence=confidence,
                          attribution=[{"scope": scope, "stop_reason": "integrity_check",
                                        "explanatory_power": 1.0, "path": [],
                                        "excess_declines": agg.raw_status_mismatch}],
@@ -151,7 +195,7 @@ class Detector:
             sig = build_signature(obs, sea)
             lost_per_min = (sea.attempts - obs.attempts) / WINDOW_SENSITIVE_MIN
             ticket = sea.avg_ticket
-            self._upsert(now, scope=scope, cause_type="no_traffic", kind="no_traffic",
+            self._upsert(ex, now, scope=scope, cause_type="no_traffic", kind="no_traffic",
                          expected_rate=sea.rate or 0.0, observed_rate=obs.rate or 0.0,
                          excess=float(sea.attempts - obs.attempts),
                          cost_min=lost_per_min * ticket * 0.5,
@@ -185,7 +229,7 @@ class Detector:
             extra_s = (now_lat - base_lat) / 1000.0
             abandon = min(0.25, 0.08 * extra_s)
             cost_min = abandon * (obs.attempts / WINDOW_SENSITIVE_MIN) * obs.avg_ticket
-            self._upsert(now, scope=scope, cause_type="latency_spike", kind="latency_spike",
+            self._upsert(ex, now, scope=scope, cause_type="latency_spike", kind="latency_spike",
                          expected_rate=exp.p0, observed_rate=obs.rate or 0.0,
                          excess=0.0, cost_min=cost_min,
                          cost_breakdown={"estimated abandonment": round(cost_min, 2)},
@@ -258,7 +302,7 @@ class Detector:
                 reasons.insert(0, f"conversion {exp.observed_rate:.1%} vs {exp.p0:.1%} expected "
                                   f"on {obs.operational_attempts} operational attempts "
                                   f"in the last {WINDOW_SENSITIVE_MIN} min")
-                self._upsert(now, scope=node.scope, cause_type=cause, kind="conversion_drop",
+                self._upsert(ex, now, scope=node.scope, cause_type=cause, kind="conversion_drop",
                              expected_rate=exp.p0, observed_rate=exp.observed_rate or 0.0,
                              excess=node.excess_declines, cost_min=cost_min,
                              cost_breakdown=breakdown, sig=sig, reasons=reasons,
@@ -301,12 +345,12 @@ class Detector:
         return onset
 
     # --- write path --------------------------------------------------------
-    def _upsert(self, now: datetime, *, scope: dict[str, str], cause_type: str, kind: str,
+    def _upsert(self, ex: Expector, now: datetime, *, scope: dict[str, str], cause_type: str, kind: str,
                 expected_rate: float, observed_rate: float, excess: float, cost_min: float,
                 cost_breakdown: dict, sig, reasons: list[str], confidence: float,
                 attribution: list, change_ids: list[str],
                 started_at: datetime | None = None, detail: dict | None = None) -> None:
-        key = fingerprint(scope, cause_type)
+        key = fingerprint(scope, cause_type, kind)
         existing_id = self.open_by_key.get(key)
 
         # Attribution can land a notch deeper or shallower from one minute to the next as
@@ -325,13 +369,11 @@ class Detector:
 
         if existing_id and existing_id in self.incidents:
             rec = self.incidents[existing_id]
-            elapsed = max(1.0, (now - rec.last_seen_at).total_seconds() / 60.0)
             rec.last_seen_at = now
             rec.expected_rate = expected_rate
             rec.observed_rate = observed_rate
             rec.excess_declines = excess
             rec.cost_per_min_usd = cost_min
-            rec.cost_usd += cost_min * elapsed
             rec.cost_breakdown = cost_breakdown
             rec.signature_before = sig.before
             rec.signature_during = sig.during
@@ -351,10 +393,14 @@ class Detector:
             cause_type=cause_type, started_at=started_at or now, last_seen_at=now,
             expected_rate=expected_rate, observed_rate=observed_rate, excess_declines=excess,
             cost_usd=0.0, cost_per_min_usd=cost_min, cost_breakdown=cost_breakdown,
+            last_cost_at=now,
             signature_before=sig.before, signature_during=sig.during, signature_json=sig.to_json(),
             attribution_json=attribution, reasons=reasons, confidence=confidence,
             related_change_event_ids=change_ids, detail=detail or {},
         )
+        if kind == "conversion_drop":
+            # Captured at the onset, before the incident had time to bend its own history.
+            rec.baseline_ewma = ex.ewma_rate(scope, rec.started_at, WINDOW_SENSITIVE_MIN)
         self.incidents[rec.id] = rec
         self.open_by_key[key] = rec.id
         self._log(now, "incident_opened", incident_id=rec.id, scope=scope,
@@ -417,6 +463,7 @@ class Detector:
             rec.frozen_series = self.cube.series(rec.scope, end, minutes)
 
     def _lifecycle(self, ex: Expector, now: datetime) -> None:
+        self._accrue_cost(ex, now)
         self._dedupe_shadowed(ex, now)
         self._freeze_finished_charts(now)
         for rec in list(self.incidents.values()):

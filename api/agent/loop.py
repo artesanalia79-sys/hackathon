@@ -9,6 +9,7 @@ Three things make this safe to put in front of judges:
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -18,6 +19,7 @@ import httpx
 from api.agent.schema import SYSTEM_PROMPT, TOOL_SUMMARY, AgentConclusion, tool_specs
 from api.agent.tools import ToolBox
 from api.config import (
+    AGENT_CONFIDENCE_HEADROOM,
     AGENT_MAX_STEPS,
     AGENT_TIMEOUT_S,
     OPENAI_API_KEY,
@@ -223,6 +225,26 @@ def _clean_scope(detector, scope: dict[str, str]) -> dict[str, str]:
     return out
 
 
+# The engine prices incidents; the agent narrates them. Any amount of money written in
+# the agent's own prose is invented by definition — its tools do not carry money any more.
+# This has already produced "costing over $1.2M so far" on a card, which contradicts a
+# guarantee we make out loud in the pitch.
+MONEY_IN_PROSE = re.compile(r"[$€£]\s*\d|\b\d[\d.,]*\s*(?:usd|dollars?|d[oó]lares)\b", re.IGNORECASE)
+
+
+def _money_in_prose(concl) -> str | None:
+    """The first field where the agent wrote a figure it was never given."""
+    fields = {"exec_line": concl.exec_line,
+              "ops_explanation": concl.ops_explanation,
+              "recommendation_rationale": concl.recommendation_rationale,
+              "recommended_action": concl.recommended_action}
+    fields.update({f"evidence[{i}].claim": e.claim for i, e in enumerate(concl.evidence)})
+    for name, text in fields.items():
+        if text and MONEY_IN_PROSE.search(text):
+            return f"{name}: {text.strip()[:120]}"
+    return None
+
+
 def _finish_conclude(detector, rec, run: AgentRun, args: dict, call_id: str, emit) -> tuple:
     """Validate, then let the agent's words in — but never its numbers."""
     try:
@@ -244,6 +266,15 @@ def _finish_conclude(detector, rec, run: AgentRun, args: dict, call_id: str, emi
         emit(run.record("rejected", tool_call_id=call_id, reason=reason))
         return deterministic_diagnosis(detector, rec, reason=reason), run
 
+    offending = _money_in_prose(concl)
+    if offending is not None:
+        reason = (f"wrote money in its own prose, which no tool gave it -> {offending}. "
+                  f"The engine is the only source of figures on the card.")
+        run.status = "rejected"
+        run.error = reason
+        emit(run.record("rejected", tool_call_id=call_id, reason=reason))
+        return deterministic_diagnosis(detector, rec, reason=reason), run
+
     emit(run.record("conclude", tool_call_id=run.handle_for(call_id),
                     root_cause=concl.root_cause_type,
                     tool_description=TOOL_SUMMARY["conclude"],
@@ -257,6 +288,15 @@ def _finish_conclude(detector, rec, run: AgentRun, args: dict, call_id: str, emi
     recommendation = Recommendation(action=concl.recommended_action,
                                     rationale=concl.recommendation_rationale)
     confidence = round(concl.confidence, 2)
+    # The agent reads the engine's evidence; it cannot be surer of the answer than the
+    # engine that produced it. Without this ceiling the card showed a 1.0 sitting on top
+    # of an engine reading of 0.45 — the agent's certainty, dressed as the system's.
+    ceiling = round(min(1.0, rec.confidence + AGENT_CONFIDENCE_HEADROOM), 2)
+    if confidence > ceiling:
+        emit(run.record("confidence_capped", tool_call_id=run.handle_for(call_id),
+                        claimed=confidence, capped_to=ceiling,
+                        engine_confidence=round(rec.confidence, 2)))
+        confidence = ceiling
     if concl.root_cause_type == "insufficient_evidence":
         run.status = "insufficient_evidence"
         confidence = min(confidence, 0.4)

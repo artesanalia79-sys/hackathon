@@ -17,7 +17,13 @@ from api.engine.cube import LeafKey, LeafMinute
 from api.engine.stats import sample_binomial, sample_multinomial, sample_poisson
 from api.sim import catalog as cat
 from api.sim.injector import Injector
-from api.sim.mapping import normalize, novel_code, pick_raw_code
+from api.sim.mapping import (
+    canonical_meta,
+    normalize,
+    novel_approved_code,
+    novel_code,
+    pick_raw_code,
+)
 
 SAMPLE_TX_PER_MINUTE = 12
 
@@ -137,12 +143,33 @@ class Generator:
                 mismatch = taken
                 approved += mismatch
 
-            by_raw = self._raw_codes(rng, self.leaves[i], by_cat, approved, novel_n)
+            # The mirror of the mapping bug: the provider approved, with a code we cannot
+            # map, so our table books a decline. A sale that worked, counted as a loss.
+            unmapped_ok = 0
+            if eff.unmapped_approval_fraction > 0 and approved > 0:
+                unmapped_ok = min(approved,
+                                  sample_binomial(rng, approved, eff.unmapped_approval_fraction))
+                approved -= unmapped_ok
+                by_cat["unknown"] = by_cat.get("unknown", 0) + unmapped_ok
+                mismatch += unmapped_ok
+
+            by_raw = self._raw_codes(rng, self.leaves[i], by_cat, approved, novel_n,
+                                     eff.sources, unmapped_ok)
+
+            # The counters are built from the raw codes, through the normalization table —
+            # not from the category the injector had in mind. Everything above this line is
+            # the provider's behaviour; everything the engine ever sees is what comes out of
+            # `normalize()`. That is what makes "the engine is never told what was injected"
+            # a true statement rather than a slogan: for an unmapped code, the table is what
+            # decides it is `unknown`, and if the table were wrong the counters would be
+            # wrong in exactly the way a real orchestrator's are.
+            counted, approved_counted = self._count_from_codes(self.leaves[i], by_raw)
+
             lat = self.latency[i] * eff.latency_factor * rng.uniform(0.9, 1.15)
             rows[lk] = LeafMinute(
-                attempts=attempts, approved=approved,
-                hard_declines=by_cat.get("hard_decline", 0),
-                by_category={c: v for c, v in by_cat.items() if v},
+                attempts=attempts, approved=approved_counted,
+                hard_declines=counted.get("hard_decline", 0),
+                by_category={c: v for c, v in counted.items() if v},
                 by_raw_code=by_raw, raw_status_mismatch=mismatch,
                 amount_sum=attempts * self.ticket[i] * rng.uniform(0.85, 1.15),
                 latency_sum=attempts * lat, latency_p95=int(lat * 1.8),
@@ -154,8 +181,30 @@ class Generator:
         txs = self._sample_transactions(rng, minute, sample_pool)
         return rows, txs
 
+    def _count_from_codes(self, leaf: dict[str, str],
+                          by_raw: dict[str, int]) -> tuple[dict[str, int], int]:
+        """Raw codes -> (declines per category, approvals), as the normalization table reads them.
+
+        This is the read the engine gets. A code the table cannot place lands in `unknown`
+        because `normalize()` says so, not because anyone told us it was novel.
+        """
+        provider = leaf["provider"]
+        counted: dict[str, int] = {}
+        approved = 0
+        for code, n in by_raw.items():
+            if n <= 0:
+                continue
+            _norm, status, category = normalize(provider, code)
+            if status == "approved":
+                approved += n
+            else:
+                counted[category] = counted.get(category, 0) + n
+        return counted, approved
+
     def _raw_codes(self, rng: random.Random, leaf: dict[str, str], by_cat: dict[str, int],
-                   approved: int, novel_n: int) -> dict[str, int]:
+                   approved: int, novel_n: int,
+                   novel_sources: list[str] | None = None,
+                   unmapped_ok: int = 0) -> dict[str, int]:
         """Spread each category's count over the provider's actual codes for that category."""
         out: dict[str, int] = {}
         provider, method = leaf["provider"], leaf["method"]
@@ -166,8 +215,17 @@ class Generator:
             if count <= 0 or category in ("none",):
                 continue
             if category == "unknown":
-                code, _m, _s = novel_code(provider)
-                out[code] = out.get(code, 0) + count
+                # The approvals we could not map carry their own literal, the one that
+                # says APPROVED — otherwise the row-level evidence would not show the
+                # disagreement the counter is claiming.
+                take = min(unmapped_ok, count)
+                if take:
+                    ok_code, _om, _os = novel_approved_code(provider)
+                    out[ok_code] = out.get(ok_code, 0) + take
+                    count -= take
+                if count > 0:
+                    code, _m, _s = novel_code(provider, novel_sources)
+                    out[code] = out.get(code, 0) + count
                 continue
             entries = cat.PROVIDER_CODES[provider].get(category) or []
             method_entry = cat.METHOD_CODES.get(method)
@@ -197,13 +255,21 @@ class Generator:
             provider = leaf["provider"]
             eff = self.injector.effect_for(leaf, minute)
             if category == "unknown":
-                raw_code, raw_msg, raw_status = novel_code(provider)
+                # Split the bucket the way the counters did: proportional to the two
+                # injected fractions, so the rows on screen match the number above them.
+                ok_w, novel_w = eff.unmapped_approval_fraction, eff.novel_code_fraction
+                takes_approved = ok_w > 0 and (novel_w <= 0
+                                               or rng.random() < ok_w / (ok_w + novel_w))
+                if takes_approved:
+                    raw_code, raw_msg, raw_status = novel_approved_code(provider)
+                else:
+                    raw_code, raw_msg, raw_status = novel_code(provider, eff.sources)
             else:
                 raw_code, raw_msg, raw_status = pick_raw_code(rng, provider, leaf["method"], category)
-            normalized_code, status, norm_category = normalize(provider, raw_code)
+            normalized_code, status, norm_category = normalize(provider, raw_code, raw_status)
             # Reproduce the mapping bug at row level so the UI can show the disagreement.
             if eff.mismap_fraction > 0 and status != "approved" and rng.random() < eff.mismap_fraction:
-                status, norm_category, normalized_code = "approved", "none", "approved"
+                status, norm_category, normalized_code = "approved", "none", "APPROVED"
             issuer = leaf["issuer"] or None
             out.append(Transaction(
                 id=f"tx_{uuid.uuid4().hex[:12]}", ts=minute, merchant_id=leaf["merchant"],
@@ -213,7 +279,10 @@ class Generator:
                 method=leaf["method"], provider=provider, brand=leaf["brand"] or None,
                 issuer=issuer, bin=cat.BIN_PREFIX.get(issuer or "", None),
                 status=status, raw_code=raw_code, raw_message=raw_msg, raw_status=raw_status,
-                normalized_code=normalized_code, decline_category=norm_category,
+                normalized_code=normalized_code,
+                iso_8583=canonical_meta(normalized_code)[0],
+                retriable=canonical_meta(normalized_code)[1],
+                decline_category=norm_category,
                 latency_ms=int(self.latency[i] * eff.latency_factor * rng.uniform(0.7, 1.6)),
             ))
         return out

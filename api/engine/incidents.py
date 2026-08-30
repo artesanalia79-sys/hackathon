@@ -13,8 +13,15 @@ from datetime import datetime
 from api.domain import Incident
 
 
-def fingerprint(scope: dict[str, str], cause_type: str | None) -> str:
-    payload = "|".join(f"{k}={v}" for k, v in sorted(scope.items())) + f"#{cause_type or '?'}"
+def fingerprint(scope: dict[str, str], cause_type: str | None, kind: str = "conversion_drop") -> str:
+    """One open incident per (scope, cause, kind).
+
+    `kind` belongs in the key: a conversion drop and a data-integrity finding on the
+    same provider are two different stories with two different fixes, and without it
+    the second one lands on the first one's record and overwrites it.
+    """
+    payload = ("|".join(f"{k}={v}" for k, v in sorted(scope.items()))
+               + f"#{cause_type or '?'}#{kind}")
     return hashlib.sha1(payload.encode()).hexdigest()[:16]
 
 
@@ -46,6 +53,11 @@ class IncidentRecord:
     acknowledged_by: str | None = None
     healthy_streak: int = 0
     last_streak_check: datetime | None = None
+    # Money accrues on the clock, not on the detector re-firing. See Detector._accrue_cost.
+    last_cost_at: datetime | None = None
+    # The recent-history half of p0, measured before this incident started. Held still
+    # while the incident is open so the expectation cannot drift down onto the failure.
+    baseline_ewma: float | None = None
     last_attributed_at: datetime | None = None
     diagnosis: dict | None = None
     # Once an incident is over and its 30-minute tail has been recorded, its chart is

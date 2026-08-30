@@ -48,6 +48,9 @@ class Effect:
     latency_factor: float = 1.0
     mismap_fraction: float = 0.0                     # declines silently recorded as approved
     novel_code_fraction: float = 0.0                 # declines carrying an unseen raw code
+    # Approvals the provider really gave, carrying a code we cannot map, which we
+    # therefore book as declines. The exact mirror of mismap_fraction.
+    unmapped_approval_fraction: float = 0.0
     sources: list[str] = field(default_factory=list) # injection ids that touched this leaf
 
 
@@ -156,6 +159,8 @@ class Injector:
                 eff.volume_factor *= max(0.0, 1.0 - min(1.0, sev if sev > 0 else 1.0))
             elif inj.type == "mapping_bug":
                 eff.mismap_fraction = min(0.95, eff.mismap_fraction + sev)
+            elif inj.type == "unmapped_approval":
+                eff.unmapped_approval_fraction = min(0.95, eff.unmapped_approval_fraction + sev)
             elif inj.type == "unknown_code":
                 eff.novel_code_fraction = min(0.95, eff.novel_code_fraction + sev)
                 eff.approval_delta += sev * 0.25
