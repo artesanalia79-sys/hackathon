@@ -131,6 +131,29 @@ def should_alert(rec: IncidentRecord) -> bool:
     return rec.cost_per_min_usd >= SLACK_ALERT_MIN_COST_PER_MIN
 
 
+async def deliver(payload: dict, incident_id: str = "") -> bool:
+    """Send an alert the best way available, and remember the thread it created.
+
+    With a bot token we post through `chat.postMessage`, because that call returns the
+    message `ts` — which is what lets someone reply "is this fixed?" under the alert and
+    get an answer about *that* incident. An incoming webhook returns nothing, so alerts
+    sent that way are one-way announcements: still useful, just not conversational.
+    """
+    from api.config import SLACK_CHANNEL
+    from api.notify import slack_events
+
+    if slack_events.can_reply() and SLACK_CHANNEL:
+        out = await slack_events.post_message(SLACK_CHANNEL, payload.get("text", ""),
+                                              blocks=payload.get("blocks"))
+        if out.get("ok"):
+            slack_events.remember_thread(out.get("ts", ""), incident_id)
+            return True
+        # A bot token that cannot post (wrong channel, missing scope) should not silently
+        # cost us the alert when a webhook is also configured.
+        log.warning("falling back to the webhook: %s", out.get("error"))
+    return await send(payload)
+
+
 async def send(payload: dict) -> bool:
     """POST to the webhook. Returns whether it landed; never raises."""
     if not SLACK_WEBHOOK_URL:
