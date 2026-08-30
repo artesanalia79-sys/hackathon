@@ -57,6 +57,9 @@ class AgentRun:
         self.handles: dict[str, str] = {}
         self.status = "running"
         self.error: str | None = None
+        # The completed agent's explicit Slack decision, kept in the trace so the UI can
+        # distinguish an alert it sent from one it deliberately chose not to send.
+        self.alert_decision: str | None = None
         self.started = time.monotonic()
 
     def record(self, kind: str, **fields) -> dict:
@@ -77,6 +80,7 @@ class AgentRun:
     def to_json(self) -> dict:
         return {"incident_id": self.incident_id, "status": self.status,
                 "error": self.error, "steps": self.steps,
+                "alert_decision": self.alert_decision,
                 "elapsed_ms": round(self.elapsed * 1000)}
 
 
@@ -188,8 +192,26 @@ async def run_agent(detector, rec: IncidentRecord, now: datetime,
                                              "not warrant interrupting anyone, just call "
                                              "`conclude` again and it will stand."})
                             continue
-                        return _finish_conclude(detector, rec, run, args, call_id, emit, now)
+                        diagnosis, finished_run = _finish_conclude(
+                            detector, rec, run, args, call_id, emit, now)
+                        # A malformed or unsupported conclusion is a failed run, not a
+                        # decision to suppress the safety-net alert. Record a decision
+                        # only once its conclusion has passed all validation.
+                        if finished_run.status in ("concluded", "insufficient_evidence"):
+                            if slack_on:
+                                finished_run.alert_decision = "sent" if box.alerted else "declined"
+                                emit(finished_run.record("alert_decision",
+                                                         decision=finished_run.alert_decision,
+                                                         tool_call_id=call_id))
+                            else:
+                                finished_run.alert_decision = "not_configured"
+                        return diagnosis, finished_run
                     if name == "insufficient_evidence":
+                        # An agent that cannot support a cause has explicitly chosen not
+                        # to interrupt a human. Do not turn that into a generic page later.
+                        run.alert_decision = "declined" if slack_on else "not_configured"
+                        emit(run.record("alert_decision", decision=run.alert_decision,
+                                        tool_call_id=call_id))
                         return _finish_insufficient(detector, rec, run, args, call_id, emit)
 
                     # The one tool that reaches outside this process is awaited rather
@@ -211,7 +233,14 @@ async def run_agent(detector, rec: IncidentRecord, now: datetime,
                     emit(run.record("tool_call", tool=name, tool_call_id=handle, arguments=args,
                                     tool_description=TOOL_SUMMARY.get(name, ""),
                                     result_preview=blob[:RESULT_PREVIEW_CHARS],
-                                    truncated=len(blob) > RESULT_PREVIEW_CHARS))
+                                    truncated=len(blob) > RESULT_PREVIEW_CHARS,
+                                    # Keep the delivery result as a first-class trace field.
+                                    # The UI should not have to parse a preview string to tell
+                                    # an operator whether Slack actually accepted the alert.
+                                    alert_sent=(result.get("sent") if name == "send_slack_alert"
+                                                else None),
+                                    alert_note=(result.get("note") or result.get("error"))
+                                    if name == "send_slack_alert" else None))
                     messages.append(call)
                     messages.append({"type": "function_call_output", "call_id": call_id,
                                      "output": blob[:12000]})

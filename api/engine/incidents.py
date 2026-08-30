@@ -64,8 +64,7 @@ class IncidentRecord:
     # history: frozen here so it stops moving and cannot scroll out of the live buffer.
     frozen_series: list | None = None
     diagnosis_pending: bool = False
-    # When an alert for this incident actually landed, and who raised it. The agent is the
-    # normal path; the runtime only steps in when there was no agent answer at all.
+    # When the diagnosis agent's Slack alert for this incident actually landed.
     alerted_at: datetime | None = None
     alerted_by: str = ""
     detail: dict = field(default_factory=dict)

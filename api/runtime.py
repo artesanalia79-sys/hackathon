@@ -12,7 +12,7 @@ import time
 from collections import deque
 from datetime import datetime, timedelta
 
-from api.config import EWMA_HOURS, PUBLIC_BASE_URL, SEED, SIM_SPEED
+from api.config import EWMA_HOURS, SEED, SIM_SPEED
 from api.domain import ChangeEvent, Injection, Transaction
 from api.engine.cube import Cube
 from api.engine.detector import Detector
@@ -224,39 +224,9 @@ class World:
                               "source": diagnosis.source})
                 if rec.alerted_at is not None:
                     self.slack_sent.add(rec.id)   # the agent raised it; record it as sent
-                await self._alert_slack(rec)
-
-    async def _alert_slack(self, rec: IncidentRecord) -> None:
-        """Safety net. The agent raises alerts; this covers the case where it never got to.
-
-        Normally `send_slack_alert` is the agent's own call — it decides whether the
-        incident is worth interrupting someone for and writes the headline. But an alert
-        channel cannot depend on a model being alive: when the agent timed out, answered
-        in prose, cited evidence it never gathered, or is simply not configured, there is
-        no agent answer and the incident still needs to reach someone. Then this fires,
-        with the deterministic card.
-
-        Alerting can never take the diagnosis loop down with it, so every failure is
-        swallowed inside `send`.
-        """
-        from api.notify import slack
-
-        if not slack.enabled() or rec.id in self.slack_sent:
-            return
-        if rec.alerted_at is not None:
-            return          # the agent already raised it, in its own words
-        if not slack.should_alert(rec):
-            return
-        self.slack_sent.add(rec.id)          # claim it before awaiting, so a second pass
-        payload = slack.build_message(rec, rec.diagnosis, PUBLIC_BASE_URL)  # cannot double-send
-        ok = await slack.send(payload)
-        if ok:
-            rec.alerted_at = self.now
-            rec.alerted_by = "engine"
-        else:
-            self.slack_sent.discard(rec.id)  # let a later diagnosis try again
-        self.publish({"type": "alert", "incident_id": rec.id, "channel": "slack",
-                      "sent": ok, "raised_by": rec.alerted_by or "engine"})
+                    self.publish({"type": "alert", "incident_id": rec.id,
+                                  "channel": "slack", "sent": True,
+                                  "raised_by": rec.alerted_by})
 
     async def _loop(self) -> None:
         """Wall clock -> simulated minutes. Generation runs off-thread so SSE stays smooth.

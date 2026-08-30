@@ -49,6 +49,13 @@ export default function TracePanel({ trace, liveSteps, diagnosis }) {
           {s.arguments && Object.keys(s.arguments).length > 0 && (
             <pre className="args">{JSON.stringify(s.arguments)}</pre>
           )}
+          {s.tool === "send_slack_alert" && (
+            <div className={`slack-result ${s.alert_sent ? "sent" : "failed"}`}>
+              {s.alert_sent ? "✓ Slack confirmó el envío de la alerta."
+                            : "Slack no confirmó el envío de la alerta."}
+              {s.alert_note && <span> {s.alert_note}</span>}
+            </div>
+          )}
           {s.result_preview && (
             <details>
               <summary className="small muted">what it returned</summary>

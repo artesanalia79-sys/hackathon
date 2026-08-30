@@ -174,13 +174,23 @@ class ToolBox:
         from api.config import PUBLIC_BASE_URL
         from api.notify import slack
 
+        if self.rec.status != "confirmed":
+            return {"sent": False,
+                    "error": "only confirmed incidents may be raised in Slack"}
         if not slack.enabled():
             return {"sent": False,
                     "error": "alerting is not configured on this deployment (no webhook). "
                              "Continue and conclude; the incident card is unaffected."}
+        if self.rec.alerted_at is not None:
+            return {"sent": False,
+                    "error": "this incident was already raised; one alert is enough"}
         if self.alerted:
             return {"sent": False,
                     "error": "you already alerted on this incident in this run; one is enough"}
+        if not slack.should_alert(self.rec):
+            return {"sent": False,
+                    "error": "this confirmed incident is below the configured alert threshold; "
+                             "continue and conclude without paging"}
         headline = (headline or "").strip()
         if not headline:
             return {"sent": False, "error": "headline is required: say what is wrong in one line"}
