@@ -186,12 +186,31 @@ PROVIDER_CODES: dict[str, dict[str, list[tuple[str, str, str]]]] = {
 }
 
 # Method-flavoured technical codes: an APM failure does not look like a card failure.
+# Two of these are the real, documented codes; the other eight are illustrative and
+# labelled as such below. Do not present an illustrative one as a real scheme code:
+# for most alternative rails in LatAm the rejection catalogue is simply not public.
 METHOD_CODES: dict[str, tuple[str, str, str, str]] = {
     # method -> (raw_code, raw_message, raw_status, category)
-    "pix": ("pix_psp_timeout", "PIX PSP did not confirm within the window", _E, "technical"),
+
+    # REAL. PIX rejections travel as ISO 20022 reason codes in pacs.002 (`codigoDeErro`).
+    # BACEN Informe SPI-055/2020 instructs participants to use the "Tabela de Domínios —
+    # Reason"; AB03 is the SPI settlement timeout.
+    # https://www.bcb.gov.br/content/estabilidadefinanceira/informesspi/InformeSPI-055-2020.pdf
+    "pix": ("AB03", "Timeout do SPI durante a liquidacao da transacao", _E, "technical"),
+
+    # REAL. Davivienda publishes a "Errores conocidos" table in its DaviPlata payment API
+    # guide; 2103 is the service timeout.
+    # https://conectesunegocio.daviplata.com/sites/default/files/2023-03/Guia%20APIs%20Pago%20con%20DaviPlata.pdf
+    "daviplata": ("2103", "Internal Server Error - servicio DaviPlata no responde", _E, "technical"),
+
+    # ILLUSTRATIVE — no public rejection catalogue found for these rails. PSE and Nequi
+    # expose codes only through each PSP's own wrapper (proprietary, not the scheme's);
+    # Bre-B (Banco de la Republica, 2025) and CoDi (Banxico, gated behind certification)
+    # publish no error tables at all; boleto and OXXO have no rejection *code* — the real
+    # mechanism is a lifecycle state (`CA` / `expired`); SPEI has plausible numeric codes
+    # via third-party PSPs but two sources disagree on their meaning, so it stays here.
     "pse": ("pse_bank_unavailable", "PSE bank is not responding", _E, "technical"),
     "nequi": ("nequi_push_expired", "Nequi push notification expired", _R, "soft_decline"),
-    "daviplata": ("daviplata_unavailable", "Daviplata service unavailable", _E, "technical"),
     "breb": ("breb_key_not_found", "Bre-B key could not be resolved", _R, "config"),
     "boleto": ("boleto_expired", "Boleto expired before payment", _R, "soft_decline"),
     "spei": ("spei_clabe_invalid", "CLABE rejected by the receiving bank", _R, "hard_decline"),
