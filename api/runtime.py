@@ -79,7 +79,7 @@ class World:
         for ago, scope, cause, duration, cost, cost_min, note in past:
             started = self.origin - ago
             rec = IncidentRecord(
-                id=new_id(), fingerprint_key=fingerprint(scope, cause), status="resolved",
+                id=new_id(), fingerprint_key=fingerprint(scope, cause, "conversion_drop"), status="resolved",
                 kind="conversion_drop", scope=dict(scope), cause_type=cause,
                 started_at=started, last_seen_at=started + timedelta(minutes=duration),
                 confirmed_at=started + timedelta(minutes=8),

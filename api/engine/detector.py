@@ -84,6 +84,34 @@ class Detector:
         self._scan_latency(ex, now)
         self._lifecycle(ex, now)
 
+    def _accrue_cost(self, ex: Expector, now: datetime) -> None:
+        """Charge every open incident for the minute that just passed.
+
+        Money accrues on the clock, not on the detector re-firing. Accruing inside
+        `_upsert` instead meant an incident only cost money on the ticks where it
+        happened to fire again in the 5-minute window: a confirmed incident that went
+        quiet kept bleeding while its total stood still.
+
+        An incident that did not fire this minute is re-priced from the live window
+        first, so it neither coasts on a stale rate while it recovers nor stops
+        counting while it is still broken.
+        """
+        for rec in self.open_incidents():
+            if rec.last_seen_at < now and rec.kind == "conversion_drop":
+                exp = ex.expect(rec.scope, now, WINDOW_SENSITIVE_MIN)
+                cost_min, breakdown = cost_per_minute(
+                    ex.observed(rec.scope, now, WINDOW_SENSITIVE_MIN),
+                    ex.seasonal(rec.scope, now, WINDOW_SENSITIVE_MIN),
+                    exp.excess_declines, WINDOW_SENSITIVE_MIN)
+                rec.cost_per_min_usd = cost_min
+                rec.cost_breakdown = breakdown
+            since = rec.last_cost_at or rec.started_at
+            minutes = (now - since).total_seconds() / 60.0
+            if minutes <= 0:
+                continue
+            rec.cost_usd += rec.cost_per_min_usd * minutes
+            rec.last_cost_at = now
+
     # --- scans -------------------------------------------------------------
     def _scan_conversion(self, ex: Expector, now: datetime) -> list[dict[str, str]]:
         """Global plus every first-level slice, on the sensitive window."""
@@ -306,7 +334,7 @@ class Detector:
                 cost_breakdown: dict, sig, reasons: list[str], confidence: float,
                 attribution: list, change_ids: list[str],
                 started_at: datetime | None = None, detail: dict | None = None) -> None:
-        key = fingerprint(scope, cause_type)
+        key = fingerprint(scope, cause_type, kind)
         existing_id = self.open_by_key.get(key)
 
         # Attribution can land a notch deeper or shallower from one minute to the next as
@@ -325,13 +353,11 @@ class Detector:
 
         if existing_id and existing_id in self.incidents:
             rec = self.incidents[existing_id]
-            elapsed = max(1.0, (now - rec.last_seen_at).total_seconds() / 60.0)
             rec.last_seen_at = now
             rec.expected_rate = expected_rate
             rec.observed_rate = observed_rate
             rec.excess_declines = excess
             rec.cost_per_min_usd = cost_min
-            rec.cost_usd += cost_min * elapsed
             rec.cost_breakdown = cost_breakdown
             rec.signature_before = sig.before
             rec.signature_during = sig.during
@@ -351,6 +377,7 @@ class Detector:
             cause_type=cause_type, started_at=started_at or now, last_seen_at=now,
             expected_rate=expected_rate, observed_rate=observed_rate, excess_declines=excess,
             cost_usd=0.0, cost_per_min_usd=cost_min, cost_breakdown=cost_breakdown,
+            last_cost_at=now,
             signature_before=sig.before, signature_during=sig.during, signature_json=sig.to_json(),
             attribution_json=attribution, reasons=reasons, confidence=confidence,
             related_change_event_ids=change_ids, detail=detail or {},
@@ -417,6 +444,7 @@ class Detector:
             rec.frozen_series = self.cube.series(rec.scope, end, minutes)
 
     def _lifecycle(self, ex: Expector, now: datetime) -> None:
+        self._accrue_cost(ex, now)
         self._dedupe_shadowed(ex, now)
         self._freeze_finished_charts(now)
         for rec in list(self.incidents.values()):
