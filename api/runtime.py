@@ -12,7 +12,7 @@ import time
 from collections import deque
 from datetime import datetime, timedelta
 
-from api.config import EWMA_HOURS, SEED, SIM_SPEED
+from api.config import EWMA_HOURS, PUBLIC_BASE_URL, SEED, SIM_SPEED
 from api.domain import ChangeEvent, Injection, Transaction
 from api.engine.cube import Cube
 from api.engine.detector import Detector
@@ -42,6 +42,7 @@ class World:
         self._task: asyncio.Task | None = None
         self._diagnoser: asyncio.Task | None = None
         self.agent_runs: dict[str, dict] = {}      # incident id -> serialised AgentRun
+        self.slack_sent: set[str] = set()          # incident ids already alerted on
         self._lock = asyncio.Lock()
         self.listeners: set[asyncio.Queue] = set()
         self.tick_cost_ms: float = 0.0
@@ -153,6 +154,7 @@ class World:
         self.injector.reset()
         self.detector.reset()
         self.agent_runs.clear()
+        self.slack_sent.clear()
         self.cube.clear_live()
         self.recent_tx.clear()
         self.generator = Generator(self.injector, seed=self.seed)
@@ -220,6 +222,28 @@ class World:
                     self.agent_runs[rec.id] = run.to_json()
                 self.publish({"type": "diagnosis", "incident_id": rec.id,
                               "source": diagnosis.source})
+                await self._alert_slack(rec)
+
+    async def _alert_slack(self, rec: IncidentRecord) -> None:
+        """One Slack message per confirmed incident, after it has been diagnosed.
+
+        Fired here rather than at the moment of confirmation so the alert carries the
+        finished card — cause, confidence and the recommended action — instead of a
+        headline the reader then has to go and look up. Alerting can never take the
+        diagnosis loop down with it, so every failure is swallowed inside `send`.
+        """
+        from api.notify import slack
+
+        if not slack.enabled() or rec.id in self.slack_sent:
+            return
+        if not slack.should_alert(rec):
+            return
+        self.slack_sent.add(rec.id)          # claim it before awaiting, so a second pass
+        payload = slack.build_message(rec, rec.diagnosis, PUBLIC_BASE_URL)  # cannot double-send
+        ok = await slack.send(payload)
+        if not ok:
+            self.slack_sent.discard(rec.id)  # let a later diagnosis try again
+        self.publish({"type": "alert", "incident_id": rec.id, "channel": "slack", "sent": ok})
 
     async def _loop(self) -> None:
         """Wall clock -> simulated minutes. Generation runs off-thread so SSE stays smooth.
