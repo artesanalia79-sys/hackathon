@@ -38,6 +38,7 @@ from api.domain import (
 from api.engine.diagnose import affected_merchants, deterministic_diagnosis, scope_phrase
 from api.engine.incidents import IncidentRecord
 from api.engine.memory import find_similar_incidents
+from api.engine.playbook import build as build_playbook
 
 RESULT_PREVIEW_CHARS = 900
 
@@ -162,7 +163,7 @@ async def run_agent(detector, rec: IncidentRecord, now: datetime,
                                         arguments={}, error=f"unparsable arguments: {exc}"))
 
                     if name == "conclude":
-                        return _finish_conclude(detector, rec, run, args, call_id, emit)
+                        return _finish_conclude(detector, rec, run, args, call_id, emit, now)
                     if name == "insufficient_evidence":
                         return _finish_insufficient(detector, rec, run, args, call_id, emit)
 
@@ -245,7 +246,8 @@ def _money_in_prose(concl) -> str | None:
     return None
 
 
-def _finish_conclude(detector, rec, run: AgentRun, args: dict, call_id: str, emit) -> tuple:
+def _finish_conclude(detector, rec, run: AgentRun, args: dict, call_id: str, emit,
+                     now: datetime) -> tuple:
     """Validate, then let the agent's words in — but never its numbers."""
     try:
         concl = AgentConclusion.model_validate(args)
@@ -285,8 +287,12 @@ def _finish_conclude(detector, rec, run: AgentRun, args: dict, call_id: str, emi
     # `conclude(root_cause="insufficient_evidence")` and the dedicated tool are the same
     # answer arriving by two doors. Route them to the same place: "I cannot tell, with 90%
     # confidence" is not a reading anyone should be shown on an incident card.
-    recommendation = Recommendation(action=concl.recommended_action,
-                                    rationale=concl.recommendation_rationale)
+    # Same rule as money: the agent decides *what* is broken, the engine says what to do
+    # about it. "Reroute away from this provider" is a sentence anyone can write; naming
+    # the provider that is currently healthy enough to take the traffic, with its rate and
+    # its sample, is a calculation — and the agent has no tool that returns it.
+    action, rationale = build_playbook(detector, rec, now, cause=concl.root_cause_type)
+    recommendation = Recommendation(action=action, rationale=rationale)
     confidence = round(concl.confidence, 2)
     # The agent reads the engine's evidence; it cannot be surer of the answer than the
     # engine that produced it. Without this ceiling the card showed a 1.0 sitting on top
