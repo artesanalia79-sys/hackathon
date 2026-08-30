@@ -79,6 +79,7 @@ export default function Chart({
 }) {
   const [range, setRange] = useState("hour");
   const [hoveredMinute, setHoveredMinute] = useState(null);
+  const [plotWidth, setPlotWidth] = useState(900);
   const svgRef = useRef(null);
   const plotRef = useRef(null);
   const available = series.filter((p) => p.rate !== null && p.rate !== undefined);
@@ -90,11 +91,26 @@ export default function Chart({
     : available;
   const pts = filtered.length >= 2 ? filtered : available;
 
+  useLayoutEffect(() => {
+    const plot = plotRef.current;
+    if (!plot) return undefined;
+
+    const updateWidth = () => {
+      const nextWidth = Math.round(plot.getBoundingClientRect().width);
+      if (nextWidth > 0) setPlotWidth(nextWidth);
+    };
+
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(plot);
+    return () => observer.disconnect();
+  }, [pts.length]);
+
   if (pts.length < 2) {
     return <div className="empty small">Not enough data in this window yet.</div>;
   }
 
-  const W = 900;
+  const W = Math.max(320, plotWidth);
   const H = height;
   const M = { l: 58, r: 20, t: 18, b: 34 };
   const iw = W - M.l - M.r;

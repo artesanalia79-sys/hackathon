@@ -137,11 +137,14 @@ a {
 
 /* ---------- layout ---------- */
 .main {
+  position: relative;
   display: grid;
-  grid-template-columns: var(--left-w, 330px) 16px minmax(0, 1fr) 16px var(
-      --right-w,
-      350px
-    );
+  grid-template-columns:
+    var(--left-w, 330px)
+    16px
+    minmax(0, 1fr)
+    var(--right-drawer-gap, 0px)
+    var(--right-drawer-w, 0px);
   flex: 1;
   min-height: 0;
 }
@@ -909,6 +912,23 @@ table.kv td.n {
 .trace pre.args {
   max-height: 90px;
 }
+.trace pre.json-preview {
+  max-height: 320px;
+  padding: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  word-break: normal;
+}
+.trace pre.json-preview.args {
+  max-height: 220px;
+}
+.json-key {
+  color: var(--shell-accent);
+  font-weight: 600;
+}
+.json-truncated {
+  color: var(--dim);
+}
 .slack-result {
   margin-top: 7px;
   font-size: 12px;
@@ -1098,10 +1118,12 @@ textarea {
 }
 
 .main {
-  grid-template-columns: var(--left-w, 330px) 16px minmax(0, 1fr) 16px var(
-      --right-w,
-      350px
-    );
+  grid-template-columns:
+    var(--left-w, 330px)
+    16px
+    minmax(0, 1fr)
+    var(--right-drawer-gap, 0px)
+    var(--right-drawer-w, 0px);
   gap: 0;
   padding: 20px 24px 24px;
 }
@@ -2151,6 +2173,99 @@ table.kv td.n {
   white-space: nowrap;
 }
 
+.drawer-peek svg,
+.drawer-close svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.trace-drawer {
+  min-width: 0;
+  animation: trace-drawer-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.drawer-peek {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  z-index: 4;
+  display: flex;
+  width: 98px;
+  height: 46px;
+  gap: 7px;
+  align-items: center;
+  padding: 0 10px 0 12px;
+  border: 1px solid #d8dcf0;
+  border-radius: 10px 0 0 10px;
+  background: var(--shell-accent-soft);
+  box-shadow: 0 6px 18px rgba(62, 79, 224, 0.16);
+  color: var(--accent);
+  opacity: 1;
+  transform: translateX(5px);
+  transition:
+    opacity 160ms ease-out,
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 160ms ease-out;
+}
+
+.drawer-peek span {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.drawer-peek .peek-chevron {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+}
+
+.drawer-peek:hover,
+.drawer-peek:focus-visible {
+  color: var(--accent);
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.drawer-peek:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(62, 79, 224, 0.13);
+}
+
+.drawer-close {
+  display: grid;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.drawer-close:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.drawer-close:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(62, 79, 224, 0.13);
+}
+
+@keyframes trace-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
 .content {
   display: flex;
   flex: 1;
@@ -2193,6 +2308,9 @@ table.kv td.n {
     display: none;
   }
   .topbar-action {
+    display: none;
+  }
+  .drawer-peek {
     display: none;
   }
 }
@@ -2278,8 +2396,11 @@ table.kv td.n {
 
 @media (prefers-reduced-motion: reduce) {
   .navitem,
-  .navitem::after {
+  .navitem::after,
+  .drawer-peek,
+  .trace-drawer {
     transition: none;
+    animation: none;
   }
 }
 
@@ -2292,6 +2413,46 @@ table.kv td.n {
   border: 1px solid #ededf0;
   border-radius: 14px;
   background: var(--panel-2);
+}
+
+.audience-switch {
+  display: inline-flex;
+  gap: 3px;
+  margin-bottom: 20px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.audience-switch button {
+  min-height: 32px;
+  padding: 6px 13px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background-color 160ms ease-out,
+    box-shadow 160ms ease-out,
+    color 160ms ease-out;
+}
+
+.audience-switch button:hover {
+  color: var(--text);
+}
+
+.audience-switch button.active {
+  background: var(--shell-accent-soft);
+  box-shadow: 0 1px 2px rgba(22, 22, 22, 0.06);
+  color: var(--shell-accent);
+}
+
+.audience-switch button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(62, 79, 224, 0.15);
 }
 
 .inchead-tags {
@@ -2341,6 +2502,28 @@ table.kv td.n {
 }
 .inchead-meta .bleed b {
   color: var(--warn);
+}
+
+.inchead-confidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inchead-confidence strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.inchead-confidence strong + span::before {
+  margin-right: 6px;
+  color: var(--dim);
+  content: "·";
 }
 
 /* The scope, as chips: a dimension label over its value, the way a KPI block reads. */
@@ -2493,8 +2676,7 @@ table.kv td.n {
 .resizer.collapsed .grip {
   background: var(--line);
 }
-.main.left-folded > .col.left,
-.main.right-folded > .col.right {
+.main.left-folded > .col.left {
   min-width: 0;
   overflow: hidden;
   border: 0;

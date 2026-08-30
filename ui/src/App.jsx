@@ -16,7 +16,14 @@ const COL_LIMITS = { left: { min: 220, max: 560 }, right: { min: 260, max: 620 }
 const readCols = () => {
   try {
     const saved = JSON.parse(localStorage.getItem(COLS_KEY));
-    return saved && typeof saved === "object" ? { ...COL_DEFAULT, ...saved } : COL_DEFAULT;
+    if (!saved || typeof saved !== "object") return COL_DEFAULT;
+    return {
+      ...COL_DEFAULT,
+      ...saved,
+      // Older versions stored a collapsed right panel as width 0. Keep the
+      // operator's last real width while the drawer owns visibility now.
+      right: saved.right > 0 ? saved.right : saved.rightPrev || COL_DEFAULT.right,
+    };
   } catch {
     return COL_DEFAULT;
   }
@@ -74,6 +81,7 @@ export default function App() {
   const [liveSteps, setLiveSteps] = useState([]);
   const [showClosed, setShowClosed] = useState(false);
   const [cols, setCols] = useState(readCols);
+  const [traceOpen, setTraceOpen] = useState(false);
   const selectedRef = useRef(null);
   selectedRef.current = selected;
 
@@ -215,9 +223,34 @@ export default function App() {
         <main className="content">
           {tab === "incidents" && (
             <div
-              className={`main${cols.left === 0 ? " left-folded" : ""}${cols.right === 0 ? " right-folded" : ""}`}
-              style={{ "--left-w": `${cols.left}px`, "--right-w": `${cols.right}px` }}
+              className={`main${cols.left === 0 ? " left-folded" : ""}${traceOpen ? " trace-open" : ""}`}
+              style={{
+                "--left-w": `${cols.left}px`,
+                "--right-w": `${cols.right}px`,
+                "--right-drawer-w": traceOpen ? `${cols.right}px` : "0px",
+                "--right-drawer-gap": traceOpen ? "16px" : "0px",
+              }}
             >
+              {!traceOpen ? (
+                <button
+                  className="drawer-peek"
+                  type="button"
+                  aria-controls="agent-trace-drawer"
+                  aria-expanded="false"
+                  aria-label="Show agent trace"
+                  title="Show agent trace"
+                  onClick={() => setTraceOpen(true)}
+                >
+                  <svg className="agent-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none">
+                    <path d="M10 3v2M6.5 6.5h7a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2Z" />
+                    <path d="M7.5 10h.01M12.5 10h.01M8 13h4" />
+                  </svg>
+                  <span>Agent</span>
+                  <svg className="peek-chevron" aria-hidden="true" viewBox="0 0 20 20" fill="none">
+                    <path d="m12 5-5 5 5 5" />
+                  </svg>
+                </button>
+              ) : null}
               <IncidentList
                 incidents={snap?.incidents || []}
                 selected={selected}
@@ -236,15 +269,24 @@ export default function App() {
               <div className="col scroll">
                 <IncidentCard incident={incident} diagnosis={diagnosis} onAck={ack} />
               </div>
-              <Resizer
-                side="right"
-                label="the agent trace"
-                width={cols.right}
-                {...COL_LIMITS.right}
-                onResize={(px) => resizeCol("right", px)}
-                onToggle={() => toggleCol("right")}
-              />
-              <TracePanel trace={trace} liveSteps={liveSteps} diagnosis={diagnosis} />
+              {traceOpen ? (
+                <>
+                  <Resizer
+                    side="right"
+                    label="the agent trace"
+                    width={cols.right}
+                    {...COL_LIMITS.right}
+                    onResize={(px) => resizeCol("right", px)}
+                    onToggle={() => setTraceOpen(false)}
+                  />
+                  <TracePanel
+                    trace={trace}
+                    liveSteps={liveSteps}
+                    diagnosis={diagnosis}
+                    onClose={() => setTraceOpen(false)}
+                  />
+                </>
+              ) : null}
             </div>
           )}
 

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { CAUSE_LABEL, clock, pct, usd } from "../api.js";
 import Baseline from "./Baseline.jsx";
 import Chart from "./Chart.jsx";
@@ -16,6 +16,8 @@ function Tile({ k, v, s, tone }) {
 }
 
 export default function IncidentCard({ incident, diagnosis, onAck }) {
+  const [audience, setAudience] = useState("executives");
+
   if (!incident) {
     return (
       <div className="col">
@@ -42,6 +44,25 @@ export default function IncidentCard({ incident, diagnosis, onAck }) {
   return (
     <div className="col">
       <div className="card">
+        <div className="audience-switch" role="group" aria-label="Incident view">
+          <button
+            className={audience === "executives" ? "active" : ""}
+            type="button"
+            aria-pressed={audience === "executives"}
+            onClick={() => setAudience("executives")}
+          >
+            Executives
+          </button>
+          <button
+            className={audience === "operations" ? "active" : ""}
+            type="button"
+            aria-pressed={audience === "operations"}
+            onClick={() => setAudience("operations")}
+          >
+            Operations
+          </button>
+        </div>
+
         <header className={`inchead ${incident.status}`}>
           <div className="inchead-tags">
             <span className={`badge ${incident.status}`}>
@@ -70,6 +91,15 @@ export default function IncidentCard({ incident, diagnosis, onAck }) {
               <b>{usd(incident.cost_per_min_usd)}</b>/min
             </span>
           </div>
+
+          <div className="inchead-confidence">
+            <span>Confidence</span>
+            <strong>{d ? `${(d.confidence * 100).toFixed(0)}%` : "—"}</strong>
+            <span>
+              {d?.source === "agent" ? "diagnosed by the agent over tools" : "deterministic engine"}
+              {d?.fallback_reason && <> · fell back because: {d.fallback_reason}</>}
+            </span>
+          </div>
         </header>
 
         <div className="grid4">
@@ -89,7 +119,7 @@ export default function IncidentCard({ incident, diagnosis, onAck }) {
           <Tile k="Cost so far" v={usd(incident.cost_usd)} s={`since ${clock(incident.started_at)}`} />
         </div>
 
-        {d?.exec_line && (
+        {audience === "executives" && d?.exec_line && (
           <div className="section">
             <h3>For the executive</h3>
             <div className="box exec">
@@ -125,146 +155,142 @@ export default function IncidentCard({ incident, diagnosis, onAck }) {
           </div>
         </div>
 
-        {d?.ops_explanation && (
-          <div className="section">
-            <h3>For the operations engineer</h3>
-            <div className="box ops">
-              <ScopeProse text={d.ops_explanation} />
-            </div>
-          </div>
-        )}
-
-        {path.length > 0 && (
-          <div className="section">
-            <h3>How the segment was isolated</h3>
-            <div className="box">
-              <div className="path">
-                <span className="step">all traffic</span>
-                {path.map((p, i) => (
-                  <React.Fragment key={i}>
-                    <span className="arrow">→</span>
-                    <span className="step">
-                      <b>{p.dimension}={p.value}</b>{" "}
-                      <em>
-                        explains {pct(p.explanatory_power, 0)} · {p.lift}× its size ·{" "}
-                        {pct(p.observed_rate)} vs {pct(p.expected_rate)}
-                      </em>
-                    </span>
-                  </React.Fragment>
-                ))}
-              </div>
-              <div className="small muted" style={{ marginTop: 9 }}>
-                Stopped: <span className="mono">{attribution?.stop_reason}</span>
-                {attribution?.stop_reason === "excess_spread_evenly" &&
-                  " — below this, every value carries the excess in proportion to its size, so there is nothing left to blame."}
-                {attribution?.stop_reason === "below_min_sample" &&
-                  " — the next level down has too few attempts to say anything honest."}
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="section">
-          <h3>Decline signature — what kind of failure this is</h3>
-          <div className="box">
-            <Signature
-              before={incident.signature_before}
-              during={incident.signature_during}
-              risen={incident.detail?.signature?.risen || []}
-            />
-            {incident.detail?.signature?.top_raw_codes?.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <div className="small muted" style={{ marginBottom: 5 }}>Raw provider codes behind it</div>
-                {incident.detail.signature.top_raw_codes.map((c) => (
-                  <span className="chip" key={c.raw_code}>
-                    {c.raw_code} × {c.count}
-                  </span>
-                ))}
+        {audience === "operations" && (
+          <>
+            {d?.ops_explanation && (
+              <div className="section">
+                <h3>For the operations engineer</h3>
+                <div className="box ops">
+                  <ScopeProse text={d.ops_explanation} />
+                </div>
               </div>
             )}
-            {incident.detail?.signature?.raw_status_mismatch_rate > 0 && (
-              <div className="small" style={{ marginTop: 9, color: "#f87171" }}>
-                {pct(incident.detail.signature.raw_status_mismatch_rate)} of decisions carry a status
-                the provider never returned.
+
+            {path.length > 0 && (
+              <div className="section">
+                <h3>How the segment was isolated</h3>
+                <div className="box">
+                  <div className="path">
+                    <span className="step">all traffic</span>
+                    {path.map((p, i) => (
+                      <React.Fragment key={i}>
+                        <span className="arrow">→</span>
+                        <span className="step">
+                          <b>{p.dimension}={p.value}</b>{" "}
+                          <em>
+                            explains {pct(p.explanatory_power, 0)} · {p.lift}× its size ·{" "}
+                            {pct(p.observed_rate)} vs {pct(p.expected_rate)}
+                          </em>
+                        </span>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  <div className="small muted" style={{ marginTop: 9 }}>
+                    Stopped: <span className="mono">{attribution?.stop_reason}</span>
+                    {attribution?.stop_reason === "excess_spread_evenly" &&
+                      " — below this, every value carries the excess in proportion to its size, so there is nothing left to blame."}
+                    {attribution?.stop_reason === "below_min_sample" &&
+                      " — the next level down has too few attempts to say anything honest."}
+                  </div>
+                </div>
               </div>
             )}
-          </div>
-        </div>
 
-        {d?.evidence?.length > 0 && (
-          <div className="section">
-            <h3>Evidence — every claim traced to a call</h3>
-            <div className="box">
-              <ul className="evidence">
-                {d.evidence.map((e, i) => (
-                  <li key={i}>
-                    <span className="tid">{e.tool_call_id}</span>
-                    <span className="claim">{e.claim}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {d?.related_change_events?.length > 0 && (
-          <div className="section">
-            <h3>Change events near the start</h3>
-            <div className="box warnbox">
-              {d.related_change_events.map((e) => (
-                <div key={e.id} style={{ marginBottom: 5 }}>
-                  <span className="chip">{e.type}</span>
-                  <span className="mono small muted">{clock(e.ts)}</span>{" "}
-                  {e.description}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {d?.similar_past?.length > 0 && (
-          <div className="section">
-            <h3>We have seen this before</h3>
-            <div className="box okbox">
-              {d.similar_past.map((s) => (
-                <div key={s.incident_id} style={{ marginBottom: 6 }}>
-                  <span className="mono small">{s.started_at.slice(0, 16).replace("T", " ")}</span>{" "}
-                  · {CAUSE_LABEL[s.cause_type] || s.cause_type} · {Math.round(s.duration_min)} min ·{" "}
-                  {usd(s.cost_usd)} · similarity {s.similarity.toFixed(2)}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {d?.recommendation && (
-          <div className="section">
-            <h3>Recommended action</h3>
-            <div className="box exec">
-              <div style={{ fontSize: 14, marginBottom: 5 }}>{d.recommendation.action}</div>
-              {d.recommendation.rationale && (
-                <div className="small muted">{d.recommendation.rationale}</div>
-              )}
-              <div className="small" style={{ marginTop: 9, color: "#fbbf24" }}>
-                Not executed. A human decides — this system never touches production.
-              </div>
-              <div style={{ marginTop: 11 }}>
-                <button className="btn" onClick={onAck} disabled={!!incident.acknowledged_by}>
-                  {incident.acknowledged_by ? `Acknowledged by ${incident.acknowledged_by}` : "Acknowledge"}
-                </button>
+            <div className="section">
+              <h3>Decline signature — what kind of failure this is</h3>
+              <div className="box">
+                <Signature
+                  before={incident.signature_before}
+                  during={incident.signature_during}
+                  risen={incident.detail?.signature?.risen || []}
+                />
+                {incident.detail?.signature?.top_raw_codes?.length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <div className="small muted" style={{ marginBottom: 5 }}>Raw provider codes behind it</div>
+                    {incident.detail.signature.top_raw_codes.map((c) => (
+                      <span className="chip" key={c.raw_code}>
+                        {c.raw_code} × {c.count}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {incident.detail?.signature?.raw_status_mismatch_rate > 0 && (
+                  <div className="small" style={{ marginTop: 9, color: "#f87171" }}>
+                    {pct(incident.detail.signature.raw_status_mismatch_rate)} of decisions carry a status
+                    the provider never returned.
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        )}
 
-        <div className="section">
-          <h3>Confidence</h3>
-          <div className="box small">
-            {d ? `${(d.confidence * 100).toFixed(0)}%` : "—"} ·{" "}
-            {d?.source === "agent" ? "diagnosed by the agent over tools" : "deterministic engine"}
-            {d?.fallback_reason && <> · fell back because: {d.fallback_reason}</>}
-          </div>
-        </div>
+            {d?.evidence?.length > 0 && (
+              <div className="section">
+                <h3>Evidence — every claim traced to a call</h3>
+                <div className="box">
+                  <ul className="evidence">
+                    {d.evidence.map((e, i) => (
+                      <li key={i}>
+                        <span className="tid">{e.tool_call_id}</span>
+                        <span className="claim">{e.claim}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {d?.related_change_events?.length > 0 && (
+              <div className="section">
+                <h3>Change events near the start</h3>
+                <div className="box warnbox">
+                  {d.related_change_events.map((e) => (
+                    <div key={e.id} style={{ marginBottom: 5 }}>
+                      <span className="chip">{e.type}</span>
+                      <span className="mono small muted">{clock(e.ts)}</span>{" "}
+                      {e.description}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {d?.similar_past?.length > 0 && (
+              <div className="section">
+                <h3>We have seen this before</h3>
+                <div className="box okbox">
+                  {d.similar_past.map((s) => (
+                    <div key={s.incident_id} style={{ marginBottom: 6 }}>
+                      <span className="mono small">{s.started_at.slice(0, 16).replace("T", " ")}</span>{" "}
+                      · {CAUSE_LABEL[s.cause_type] || s.cause_type} · {Math.round(s.duration_min)} min ·{" "}
+                      {usd(s.cost_usd)} · similarity {s.similarity.toFixed(2)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {d?.recommendation && (
+              <div className="section">
+                <h3>Recommended action</h3>
+                <div className="box exec">
+                  <div style={{ fontSize: 14, marginBottom: 5 }}>{d.recommendation.action}</div>
+                  {d.recommendation.rationale && (
+                    <div className="small muted">{d.recommendation.rationale}</div>
+                  )}
+                  <div className="small" style={{ marginTop: 9, color: "#fbbf24" }}>
+                    Not executed. A human decides — this system never touches production.
+                  </div>
+                  <div style={{ marginTop: 11 }}>
+                    <button className="btn" onClick={onAck} disabled={!!incident.acknowledged_by}>
+                      {incident.acknowledged_by ? `Acknowledged by ${incident.acknowledged_by}` : "Acknowledge"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </>
+        )}
       </div>
     </div>
   );
