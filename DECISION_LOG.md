@@ -5,7 +5,7 @@ deliverable for NextWave Challenge 02, and it is also the honest record of where
 design pushed back on us. Every entry points at the code that implements it, so the
 decision can be checked, not just asserted.
 
-Three people built this across separate working sessions; the reasoning lives in the
+Four people built this across separate working sessions; the reasoning lives in the
 code and its comments as much as in anyone's head. Where a decision was *forced* by a
 test rather than chosen up front, we say so — those are marked and cross-referenced to
 [`docs/UGLY_CASES.md`](docs/UGLY_CASES.md), which is executable via `make eval`.
