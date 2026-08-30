@@ -13,7 +13,7 @@ UV := $(shell command -v uv 2>/dev/null || echo "$$HOME/.local/bin/uv")
 NPM := npm
 endif
 
-.PHONY: help setup run dev ui eval smoke reset clean lint
+.PHONY: help setup run dev ui eval smoke scenario reset clean lint
 
 help:
 	@echo ""
@@ -22,6 +22,7 @@ help:
 	@echo "  make dev     API with reload + Vite dev server (two terminals in one)"
 	@echo "  make eval    run every ugly case in docs/UGLY_CASES.md"
 	@echo "  make smoke   30-second end-to-end check against a running server"
+	@echo "  make scenario  fire 5 overlapping incidents and watch them get separated"
 	@echo "  make reset   clear injections, incidents and memory on a running server"
 	@echo ""
 
@@ -62,6 +63,9 @@ eval:
 
 smoke:
 	$(UV) run python -m eval.smoke --port $(PORT)
+
+scenario:
+	$(UV) run python -m eval.scenario_parallel --port $(PORT)
 
 reset:
 ifeq ($(OS),Windows_NT)

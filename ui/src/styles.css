@@ -518,6 +518,46 @@ td.mismatch {
   color: var(--ok);
 }
 
+/* ---------- cost of the diagnosis ---------- */
+.trace-cost {
+  margin: 12px 14px;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.trace-cost-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.trace-cost-usd {
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+.trace-cost-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.trace-cost-detail {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.trace-cost-contrast {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.trace-cost-contrast.muted {
+  color: var(--muted);
+}
+
 /* ---------- injector ---------- */
 .drawer {
   position: fixed;

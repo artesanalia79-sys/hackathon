@@ -25,6 +25,7 @@ from api.config import (
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     OPENAI_MODEL,
+    price_for,
 )
 from api.domain import (
     Affected,
@@ -60,7 +61,46 @@ class AgentRun:
         # The completed agent's explicit Slack decision, kept in the trace so the UI can
         # distinguish an alert it sent from one it deliberately chose not to send.
         self.alert_decision: str | None = None
+        # Token spend, accumulated across every round trip, so the card can price its own
+        # reasoning. The Responses API returns these in each payload's `usage` block.
+        self.usage = {"input_tokens": 0, "cached_input_tokens": 0,
+                      "output_tokens": 0, "requests": 0}
         self.started = time.monotonic()
+
+    def add_usage(self, usage: dict | None) -> None:
+        """Fold one response's token counts into the running total."""
+        if not usage:
+            return
+        self.usage["requests"] += 1
+        self.usage["input_tokens"] += int(usage.get("input_tokens") or 0)
+        self.usage["output_tokens"] += int(usage.get("output_tokens") or 0)
+        details = usage.get("input_tokens_details") or {}
+        self.usage["cached_input_tokens"] += int(details.get("cached_tokens") or 0)
+
+    def cost(self) -> dict:
+        """Token totals plus a USD figure, computed from the config price table.
+
+        `usd` is None for a model we have no price for — the UI then shows the token
+        count without inventing a dollar amount. Cached input is billed at its own rate
+        when the model has one.
+        """
+        u = self.usage
+        prices = price_for(OPENAI_MODEL)
+        usd: float | None = None
+        if prices is not None:
+            fresh_input = max(0, u["input_tokens"] - u["cached_input_tokens"])
+            usd = (fresh_input * prices["input"]
+                   + u["cached_input_tokens"] * prices.get("cached_input", prices["input"])
+                   + u["output_tokens"] * prices["output"]) / 1_000_000
+        return {
+            "model": OPENAI_MODEL,
+            "requests": u["requests"],
+            "input_tokens": u["input_tokens"],
+            "cached_input_tokens": u["cached_input_tokens"],
+            "output_tokens": u["output_tokens"],
+            "total_tokens": u["input_tokens"] + u["output_tokens"],
+            "usd": round(usd, 6) if usd is not None else None,
+        }
 
     def record(self, kind: str, **fields) -> dict:
         entry = {"seq": len(self.steps) + 1, "kind": kind,
@@ -81,6 +121,7 @@ class AgentRun:
         return {"incident_id": self.incident_id, "status": self.status,
                 "error": self.error, "steps": self.steps,
                 "alert_decision": self.alert_decision,
+                "cost": self.cost(),
                 "elapsed_ms": round(self.elapsed * 1000)}
 
 
@@ -156,6 +197,7 @@ async def run_agent(detector, rec: IncidentRecord, now: datetime,
                 if resp.status_code >= 400:
                     raise RuntimeError(f"responses API {resp.status_code}: {resp.text[:200]}")
                 payload = resp.json()
+                run.add_usage(payload.get("usage"))
                 calls, _others = _extract_calls(payload)
                 if not calls:
                     raise ValueError("the model answered in prose instead of calling a tool")

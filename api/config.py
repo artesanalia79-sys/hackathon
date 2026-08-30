@@ -75,6 +75,29 @@ AGENT_CONFIDENCE_HEADROOM = 0.05
 # diagnosis is already on the card before the agent starts, and the agent upgrades it.
 AGENT_TIMEOUT_S = float(os.getenv("CT_AGENT_TIMEOUT_S", "40"))
 
+# What a diagnosis actually costs in API spend. USD per 1M tokens, per model, so the card
+# can price its own reasoning next to the money the incident is losing. These are list
+# prices at build time — override them for your account, or add a model, via this table;
+# an unknown model shows its token count with no dollar figure rather than a wrong one.
+OPENAI_PRICE_PER_1M: dict[str, dict[str, float]] = {
+    "gpt-4.1-mini": {"input": 0.40, "cached_input": 0.10, "output": 1.60},
+    "gpt-4.1": {"input": 2.00, "cached_input": 0.50, "output": 8.00},
+    "gpt-4.1-nano": {"input": 0.10, "cached_input": 0.025, "output": 0.40},
+    "gpt-4o-mini": {"input": 0.15, "cached_input": 0.075, "output": 0.60},
+    "gpt-4o": {"input": 2.50, "cached_input": 1.25, "output": 10.00},
+}
+
+
+def price_for(model: str) -> dict[str, float] | None:
+    """Prices for a model id, tolerant of a dated suffix (gpt-4.1-mini-2025-...)."""
+    exact = OPENAI_PRICE_PER_1M.get(model)
+    if exact is not None:
+        return exact
+    for name, prices in OPENAI_PRICE_PER_1M.items():
+        if model.startswith(name):
+            return prices
+    return None
+
 # --- slack alerts -----------------------------------------------------------
 # Empty webhook = alerting off, the same way an empty OPENAI_API_KEY turns the agent off.
 # Nothing is attempted, nothing is logged, nothing fails.
