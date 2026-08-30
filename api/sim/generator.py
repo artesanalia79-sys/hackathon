@@ -155,11 +155,21 @@ class Generator:
 
             by_raw = self._raw_codes(rng, self.leaves[i], by_cat, approved, novel_n,
                                      eff.sources, unmapped_ok)
+
+            # The counters are built from the raw codes, through the normalization table —
+            # not from the category the injector had in mind. Everything above this line is
+            # the provider's behaviour; everything the engine ever sees is what comes out of
+            # `normalize()`. That is what makes "the engine is never told what was injected"
+            # a true statement rather than a slogan: for an unmapped code, the table is what
+            # decides it is `unknown`, and if the table were wrong the counters would be
+            # wrong in exactly the way a real orchestrator's are.
+            counted, approved_counted = self._count_from_codes(self.leaves[i], by_raw)
+
             lat = self.latency[i] * eff.latency_factor * rng.uniform(0.9, 1.15)
             rows[lk] = LeafMinute(
-                attempts=attempts, approved=approved,
-                hard_declines=by_cat.get("hard_decline", 0),
-                by_category={c: v for c, v in by_cat.items() if v},
+                attempts=attempts, approved=approved_counted,
+                hard_declines=counted.get("hard_decline", 0),
+                by_category={c: v for c, v in counted.items() if v},
                 by_raw_code=by_raw, raw_status_mismatch=mismatch,
                 amount_sum=attempts * self.ticket[i] * rng.uniform(0.85, 1.15),
                 latency_sum=attempts * lat, latency_p95=int(lat * 1.8),
@@ -170,6 +180,26 @@ class Generator:
 
         txs = self._sample_transactions(rng, minute, sample_pool)
         return rows, txs
+
+    def _count_from_codes(self, leaf: dict[str, str],
+                          by_raw: dict[str, int]) -> tuple[dict[str, int], int]:
+        """Raw codes -> (declines per category, approvals), as the normalization table reads them.
+
+        This is the read the engine gets. A code the table cannot place lands in `unknown`
+        because `normalize()` says so, not because anyone told us it was novel.
+        """
+        provider = leaf["provider"]
+        counted: dict[str, int] = {}
+        approved = 0
+        for code, n in by_raw.items():
+            if n <= 0:
+                continue
+            _norm, status, category = normalize(provider, code)
+            if status == "approved":
+                approved += n
+            else:
+                counted[category] = counted.get(category, 0) + n
+        return counted, approved
 
     def _raw_codes(self, rng: random.Random, leaf: dict[str, str], by_cat: dict[str, int],
                    approved: int, novel_n: int,
