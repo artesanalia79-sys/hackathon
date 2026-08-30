@@ -3,7 +3,6 @@ import { get, post, pct, usd } from "./api.js";
 import IncidentCard from "./components/IncidentCard.jsx";
 import IncidentList from "./components/IncidentList.jsx";
 import InjectPanel from "./components/InjectPanel.jsx";
-import Sparkline from "./components/Sparkline.jsx";
 import SpeedControl from "./components/SpeedControl.jsx";
 import TracePanel from "./components/TracePanel.jsx";
 import TrafficPanel from "./components/TrafficPanel.jsx";
@@ -14,10 +13,42 @@ const TABS = [
   { id: "inject", label: "Inject" },
 ];
 
+function NavIcon({ name }) {
+  const paths = {
+    incidents: (
+      <>
+        <path d="M4 15.5 8.5 11l3 3L20 5.5" />
+        <path d="M15 5.5h5v5" />
+        <path d="M4 20h16" />
+      </>
+    ),
+    traffic: (
+      <>
+        <path d="M4 18V9" />
+        <path d="M10 18V5" />
+        <path d="M16 18v-7" />
+        <path d="M22 18V3" />
+      </>
+    ),
+    inject: (
+      <>
+        <path d="M12 3v12" />
+        <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
+        <path d="M5 18.5h14" />
+      </>
+    ),
+  };
+
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      {paths[name]}
+    </svg>
+  );
+}
+
 export default function App() {
   const [tab, setTab] = useState("incidents");
   const [snap, setSnap] = useState(null);
-  const [health, setHealth] = useState(null);
   const [catalog, setCatalog] = useState(null);
   const [speed, setSpeed] = useState(null);
   const [speedOptions, setSpeedOptions] = useState([]);
@@ -53,11 +84,8 @@ export default function App() {
   }, [loadIncident]);
 
   useEffect(() => {
-    get("/health").then(setHealth);
     get("/api/catalog").then(setCatalog);
     get("/api/speed").then((d) => { setSpeed(d.sim_speed); setSpeedOptions(d.options); });
-    const t = setInterval(() => get("/health").then(setHealth), 6000);
-    return () => clearInterval(t);
   }, []);
 
   const select = (id) => {
@@ -80,11 +108,6 @@ export default function App() {
     if (top) select(top.id);
   }, [snap, selected]);
 
-  const doReset = async () => {
-    await post("/api/reset");
-    setSelected(null); setIncident(null); setDiagnosis(null); setTrace(null); setLiveSteps([]);
-  };
-
   const ack = async () => {
     await post(`/api/incidents/${selected}/ack?by=ops`);
     loadIncident(selected);
@@ -94,90 +117,104 @@ export default function App() {
   const below = g && g.observed_rate != null && g.observed_rate < g.expected_rate - 0.01;
   const openCount = snap?.open_count ?? 0;
   const paused = Number(speed) === 0;
+  const activePage = TABS.find((item) => item.id === tab)?.label;
 
   return (
     <div className="app">
-      <div className="topbar">
-        <div className="brand">
-          <b>Control Tower</b>
-          <span>PagoTotal</span>
+      <aside className="sidebar" aria-label="Primary navigation">
+        <div className="brandmark" aria-label="Control Tower">
+          <span>CT</span>
         </div>
 
-        <div className="stat">
-          <span className="k">simulated clock</span>
-          <span className="v">
-            {snap?.now ? snap.now.slice(5, 16).replace("T", " ") : "—"}
-            {paused && <span className="pausedtag">paused</span>}
-          </span>
-        </div>
-        <SpeedControl speed={speed} options={speedOptions} onChange={setSpeed} />
+        <nav className="sidenav">
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              className={`navitem${tab === item.id ? " on" : ""}`}
+              onClick={() => setTab(item.id)}
+              aria-current={tab === item.id ? "page" : undefined}
+              aria-label={item.label}
+              data-label={item.label}
+            >
+              <NavIcon name={item.id} />
+              {item.id === "incidents" && openCount > 0 && <span className="navcount">{openCount}</span>}
+            </button>
+          ))}
+        </nav>
 
-        <div className="stat">
-          <span className="k">attempts / min</span>
-          <span className="v">{g?.attempts_per_min?.toLocaleString() ?? "—"}</span>
+        <div className={`connection${snap ? " online" : ""}`} aria-label={snap ? "Simulator connected" : "Connecting to simulator"}>
+          <span />
         </div>
-        <div className="stat">
-          <span className="k">conversion</span>
-          <span className={`v ${below ? "bad" : "ok"}`}>{pct(g?.observed_rate)}</span>
-          <span className="k">vs {pct(g?.expected_rate)} expected</span>
-        </div>
-        <div className="stat">
-          <span className="k">bleeding</span>
-          <span className={`v ${snap?.total_cost_per_min_usd ? "warn" : ""}`}>
-            {usd(snap?.total_cost_per_min_usd || 0)}/min
-          </span>
-        </div>
-        <div style={{ width: 150, opacity: 0.9 }}>
-          <Sparkline series={g?.series} expected={g?.expected_rate} height={32} />
-        </div>
+      </aside>
 
-        <span className="spacer" />
-        <span className={`pill ${health?.agent?.available ? "live" : "off"}`}>
-          {health?.agent?.available ? `agent · ${health.agent.model}` : "agent off · deterministic"}
-        </span>
-        <button className="btn" onClick={doReset}>Reset</button>
-      </div>
-
-      <div className="tabbar">
-        {TABS.map((t) => (
-          <button key={t.id} className={`tab${tab === t.id ? " on" : ""}`} onClick={() => setTab(t.id)}>
-            {t.label}
-            {t.id === "incidents" && openCount > 0 && <span className="count">{openCount}</span>}
-          </button>
-        ))}
-        <span className="spacer" />
-        {tab !== "inject" && (
-          <button className="btn primary" onClick={() => setTab("inject")}>Inject a failure</button>
-        )}
-      </div>
-
-      {tab === "incidents" && (
-        <div className="main">
-          <IncidentList
-            incidents={snap?.incidents || []}
-            selected={selected}
-            onSelect={select}
-            showClosed={showClosed}
-            onToggleClosed={() => setShowClosed((v) => !v)}
-          />
-          <div className="col scroll">
-            <IncidentCard incident={incident} diagnosis={diagnosis} onAck={ack} />
+      <section className="workspace">
+        <header className="topbar">
+          <div className="page-identity">
+            <span className="product-name">PagoTotal · Control Tower</span>
+            <strong>{activePage}</strong>
           </div>
-          <TracePanel trace={trace} liveSteps={liveSteps} diagnosis={diagnosis} />
-        </div>
-      )}
 
-      {tab === "traffic" && (
-        <div className="single">
-          <TrafficPanel snap={snap} catalog={catalog} now={snap?.now} />
-        </div>
-      )}
+          <div className="operational-summary">
+            <div className="stat">
+              <span className="k">Attempts / min</span>
+              <span className="v">{g?.attempts_per_min?.toLocaleString() ?? "—"}</span>
+            </div>
+            <div className="stat">
+              <span className="k">Conversion</span>
+              <span className={`v ${below ? "bad" : "ok"}`}>{pct(g?.observed_rate)}</span>
+              <span className="context">vs {pct(g?.expected_rate)} expected</span>
+            </div>
+            <div className="stat">
+              <span className="k">Bleeding</span>
+              <span className={`v ${snap?.total_cost_per_min_usd ? "warn" : ""}`}>
+                {usd(snap?.total_cost_per_min_usd || 0)}/min
+              </span>
+            </div>
+            <div className="stat simulated-clock">
+              <span className="k">Simulated clock</span>
+              <span className="v">
+                {snap?.now ? snap.now.slice(5, 16).replace("T", " ") : "—"}
+                {paused && <span className="pausedtag">paused</span>}
+              </span>
+            </div>
+            <SpeedControl speed={speed} options={speedOptions} onChange={setSpeed} />
+          </div>
 
-      {tab === "inject" && (
-        <div className="single scroll">
-          <InjectPanel catalog={catalog} now={snap?.now} onInjected={() => setTab("incidents")} />
-        </div>
-      )}
+          {tab !== "inject" && (
+            <button className="btn primary topbar-action" onClick={() => setTab("inject")}>Inject failure</button>
+          )}
+        </header>
+
+        <main className="content">
+          {tab === "incidents" && (
+            <div className="main">
+              <IncidentList
+                incidents={snap?.incidents || []}
+                selected={selected}
+                onSelect={select}
+                showClosed={showClosed}
+                onToggleClosed={() => setShowClosed((v) => !v)}
+              />
+              <div className="col scroll">
+                <IncidentCard incident={incident} diagnosis={diagnosis} onAck={ack} />
+              </div>
+              <TracePanel trace={trace} liveSteps={liveSteps} diagnosis={diagnosis} />
+            </div>
+          )}
+
+          {tab === "traffic" && (
+            <div className="single">
+              <TrafficPanel snap={snap} catalog={catalog} now={snap?.now} />
+            </div>
+          )}
+
+          {tab === "inject" && (
+            <div className="single scroll">
+              <InjectPanel catalog={catalog} now={snap?.now} onInjected={() => setTab("incidents")} />
+            </div>
+          )}
+        </main>
+      </section>
     </div>
   );
 }

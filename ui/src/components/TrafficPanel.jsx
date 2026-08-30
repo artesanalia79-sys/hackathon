@@ -51,10 +51,10 @@ export default function TrafficPanel({ snap, catalog, now }) {
     <div className="scroll">
       <div className="card">
         <div className="section">
-          <h3>Platform conversion — last 90 simulated minutes</h3>
+          <h3>Platform conversion</h3>
           <div className="box">
             <Chart series={g?.series || []} expected={g?.expected_rate}
-                   caption="the whole platform, rolling" height={190} />
+                   caption="the whole platform, rolling" height={220} rangeFilter />
           </div>
         </div>
 
