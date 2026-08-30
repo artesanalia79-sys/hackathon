@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Control Tower">
+  <title>Control Tower</title>
+  <!-- The sidebar brandmark, at tab size: the same indigo tile, the same CT.
+       The monogram is drawn as paths, not text, so it never depends on a font
+       being installed and stays crisp at 16px. -->
+  <rect width="32" height="32" rx="8.8" fill="#525de6"/>
+  <g fill="none" stroke="#fcfdff" stroke-width="2.9" stroke-linecap="round">
+    <path d="M14.41 12.17 A5 5 0 1 0 14.41 19.83"/>
+  </g>
+  <g fill="#fcfdff">
+    <rect x="17.4" y="9.9" width="10" height="2.9" rx="1.45"/>
+    <rect x="20.95" y="9.9" width="2.9" height="12.2" rx="1.45"/>
+  </g>
+</svg>
