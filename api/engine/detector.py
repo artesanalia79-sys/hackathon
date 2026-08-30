@@ -155,15 +155,25 @@ class Detector:
             nearby = related_change_events(self.change_events, scope, now)
             reasons = [(f"{rate:.1%} of {provider} decisions were stored with a status the "
                        f"provider did not return ({agg.raw_status_mismatch} of {agg.attempts} attempts)")]
+            # Same disagreement, two opposite fixes. Codes we cannot map mean the table is
+            # incomplete — map the code. A clean mapping that still disagrees means
+            # something we shipped is wrong — roll it back.
+            cause = "mapping_bug"
+            confidence = 0.95 if nearby else 0.85
+            if sig.unmapped_codes:
+                cause = "unmapped_provider_code"
+                confidence = 0.9
+                reasons.append(f"the disagreeing rows carry codes we do not map "
+                               f"({', '.join(sig.unmapped_codes[:3])})")
             if nearby:
                 reasons.append(f"{nearby[0].type} at {nearby[0].ts:%H:%M}: {nearby[0].description}")
             # These are approvals we booked but never got: value at full risk.
             cost_min = (agg.raw_status_mismatch / WINDOW_SENSITIVE_MIN) * agg.avg_ticket
-            self._upsert(ex, now, scope=scope, cause_type="mapping_bug", kind="data_integrity",
+            self._upsert(ex, now, scope=scope, cause_type=cause, kind="data_integrity",
                          expected_rate=seasonal.rate or 0.0, observed_rate=agg.rate or 0.0,
                          excess=float(agg.raw_status_mismatch), cost_min=cost_min,
                          cost_breakdown={"mis-stated approvals": round(cost_min, 2)},
-                         sig=sig, reasons=reasons, confidence=0.95 if nearby else 0.85,
+                         sig=sig, reasons=reasons, confidence=confidence,
                          attribution=[{"scope": scope, "stop_reason": "integrity_check",
                                        "explanatory_power": 1.0, "path": [],
                                        "excess_declines": agg.raw_status_mismatch}],

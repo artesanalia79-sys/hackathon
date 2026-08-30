@@ -167,6 +167,14 @@ def classify(scope: dict[str, str], sig: Signature, ex: Expector, end: datetime,
     if sig.mismatch_rate >= MISMATCH_RATE_ALERT:
         reasons.append(f"{sig.mismatch_rate:.1%} of decisions were stored with a status the "
                        f"provider did not return")
+        # Two ways to disagree, and they take opposite fixes. If the disagreeing rows are
+        # also carrying codes we do not map, nothing was rolled out wrong - the table is
+        # simply incomplete, and the action is to map the code, not to revert a change.
+        if sig.unknown_share >= UNKNOWN_SHARE_ALERT and sig.unmapped_codes:
+            codes = ", ".join(sig.unmapped_codes[:3])
+            reasons.append(f"the disagreeing rows carry codes we do not map ({codes}): the "
+                           f"provider answered, we could not read the answer")
+            return "unmapped_provider_code", 0.9, reasons
         if nearby:
             reasons.append(f"a {nearby[0].type} landed within {CHANGE_WINDOW_MIN} min: {nearby[0].description}")
         return "mapping_bug", 0.95 if nearby else 0.85, reasons

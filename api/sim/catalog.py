@@ -220,11 +220,43 @@ METHOD_CODES: dict[str, tuple[str, str, str, str]] = {
 }
 
 # Codes the platform has never seen — used by the `unknown_code` injection.
-NOVEL_CODES: dict[str, tuple[str, str, str]] = {
-    "stripe": ("issuer_rule_v2_block", "Blocked by issuer rule set v2", _R),
-    "adyen": ("AcquirerFraudShield", "Acquirer fraud shield triggered", _R),
-    "dlocal": ("412", "Undocumented acquirer response", _R),
-    "mercadopago": ("cc_rejected_policy_v3", "Rejected by policy engine v3", _R),
+# Codes our normalization table has never seen. Several per provider, because a single
+# fixed one turns the flagship scenario into a constant: inject `unknown_code` twice and
+# a judge sees the same literal both times. One code is chosen per *injection*, not per
+# minute or per row - a single change upstream emits a single new code, and the number
+# the card shows has to hold still while the incident is open.
+NOVEL_CODES: dict[str, list[tuple[str, str, str]]] = {
+    "stripe": [
+        ("issuer_rule_v2_block", "Blocked by issuer rule set v2", _R),
+        ("network_advice_47", "Network advice code 47 returned by issuer", _R),
+        ("velocity_shield_hit", "Velocity shield threshold reached", _R),
+    ],
+    "adyen": [
+        ("AcquirerFraudShield", "Acquirer fraud shield triggered", _R),
+        ("IssuerRiskProfile", "Issuer risk profile mismatch", _R),
+        ("SchemeAdviceRetry", "Scheme advised no retry for this account", _R),
+    ],
+    "dlocal": [
+        ("412", "Undocumented acquirer response", _R),
+        ("418", "Acquirer returned an unmapped status", _R),
+        ("451", "Blocked by local compliance rule", _R),
+    ],
+    "mercadopago": [
+        ("cc_rejected_policy_v3", "Rejected by policy engine v3", _R),
+        ("cc_rejected_issuer_ruleset", "Rejected by issuer rule set", _R),
+        ("cc_rejected_network_advice", "Rejected following network advice", _R),
+    ],
+}
+
+# The mirror: an unseen code that the provider returned as an APPROVAL. Our table cannot
+# place it, so it books as a decline - a sale that succeeded and that we are counting,
+# reporting and possibly retrying as a failure. Same bug family as a wrong mapping, in
+# the direction nobody instruments.
+NOVEL_APPROVED_CODES: dict[str, tuple[str, str, str]] = {
+    "stripe": ("succeeded_via_network_token", "Payment succeeded via network token", _A),
+    "adyen": ("AuthorisedPartial", "Authorised - partial approval", _A),
+    "dlocal": ("201", "The payment was paid - settled offline", _A),
+    "mercadopago": ("accredited_deferred", "Accredited with deferred capture", _A),
 }
 
 

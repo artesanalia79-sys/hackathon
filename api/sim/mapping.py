@@ -7,7 +7,9 @@ no log integration required.
 """
 from __future__ import annotations
 
-from api.sim.catalog import METHOD_CODES, NOVEL_CODES, PROVIDER_CODES
+import hashlib
+
+from api.sim.catalog import METHOD_CODES, NOVEL_APPROVED_CODES, NOVEL_CODES, PROVIDER_CODES
 
 # Cross-provider canonical codes. Two providers saying the same thing in different
 # words must end up as the same normalized_code, or attribution across providers lies.
@@ -124,15 +126,26 @@ def _build_table() -> dict[tuple[str, str], tuple[str, str, str]]:
 NORMALIZATION = _build_table()
 
 
-def normalize(provider: str, raw_code: str) -> tuple[str, str, str]:
+def normalize(provider: str, raw_code: str,
+              raw_status: str | None = None) -> tuple[str, str, str]:
     """Map a raw provider code. Anything we have never seen becomes `unknown` — loudly.
 
-    Returning `unknown` instead of guessing is the point: an unmapped code that we
-    silently treated as a decline (or an approval) is exactly the failure we hunt.
+    We do not guess where an unseen code belongs: guessing is the exact failure this
+    product exists to catch, and a code placed in the "closest looking" bucket is a code
+    nobody will ever go and map. `unknown` is the honest answer, and the detector turns
+    it into an incident with the literal attached.
+
+    An unmapped APPROVAL still comes back as `declined`, on purpose: that is exactly what
+    a real orchestrator does when its table has no entry, and it is the bug worth showing.
+    The provider's own `raw_status` travels beside it untouched, so the row on screen says
+    APPROVED next to our `declined` — the contradiction is the evidence. An unmapped
+    ERROR, on the other hand, is recorded as an error, because there we lose nothing by
+    being faithful.
     """
     hit = NORMALIZATION.get((provider, raw_code))
     if hit is None:
-        return (f"unmapped:{raw_code}", "declined", "unknown")
+        status = "error" if raw_status == "ERROR" else "declined"
+        return (f"unmapped:{raw_code}", status, "unknown")
     return hit
 
 
@@ -140,8 +153,28 @@ def is_known(provider: str, raw_code: str) -> bool:
     return (provider, raw_code) in NORMALIZATION
 
 
-def novel_code(provider: str) -> tuple[str, str, str]:
-    return NOVEL_CODES.get(provider, ("999", "Undocumented response", "REJECTED"))
+_FALLBACK_NOVEL = ("999", "Undocumented response", "REJECTED")
+
+
+def novel_code(provider: str, sources: list[str] | None = None) -> tuple[str, str, str]:
+    """The unseen code this provider is emitting, fixed for the life of one injection.
+
+    Keyed off the injection id rather than the clock: within an incident the literal has
+    to stay put (one upstream change emits one new code, and the operator is going to
+    read it off the card), while two separate injections should not look identical.
+    """
+    pool = NOVEL_CODES.get(provider)
+    if not pool:
+        return _FALLBACK_NOVEL
+    if not sources:
+        return pool[0]
+    seed = hashlib.sha1("|".join(sorted(sources)).encode()).hexdigest()
+    return pool[int(seed[:8], 16) % len(pool)]
+
+
+def novel_approved_code(provider: str) -> tuple[str, str, str]:
+    """An unseen code the provider returned as an approval."""
+    return NOVEL_APPROVED_CODES.get(provider, ("998", "Undocumented approval", "APPROVED"))
 
 
 def pick_raw_code(rng, provider: str, method: str, category: str) -> tuple[str, str, str]:

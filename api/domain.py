@@ -61,7 +61,7 @@ class ChangeEvent(BaseModel):
 InjectionType = Literal[
     "provider_degraded", "issuer_over_declining", "method_down",
     "network_degraded", "mapping_bug", "routing_change", "latency_spike",
-    "hard_decline_spike", "merchant_outage", "unknown_code",
+    "hard_decline_spike", "merchant_outage", "unknown_code", "unmapped_approval",
 ]
 
 
