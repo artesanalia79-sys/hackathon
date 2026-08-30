@@ -1,6 +1,16 @@
 import React from "react";
+import { usd } from "../api.js";
 
 const indent = (depth) => "  ".repeat(Math.max(0, depth));
+
+// The compute cost is fractions of a cent, so the whole-dollar `usd` helper would round
+// it to "$0.00". Keep enough precision to see it without turning it into noise.
+const money = (v) =>
+  v === null || v === undefined
+    ? "—"
+    : v >= 1
+      ? `$${v.toFixed(2)}`
+      : `$${v.toFixed(v < 0.1 ? 4 : 3)}`;
 
 function formatPartialJson(source) {
   let formatted = "";
@@ -84,6 +94,12 @@ export default function TracePanel({ trace, liveSteps, diagnosis, onClose }) {
   const steps = (trace?.steps?.length ? trace.steps : liveSteps) || [];
   const source = diagnosis?.source;
 
+  // What this diagnosis cost to produce, next to what the incident was costing per minute.
+  const cost = trace?.cost;
+  const costPerMin = diagnosis?.affected?.cost_per_min_usd;
+  const bleedSeconds =
+    cost?.usd != null && costPerMin > 0 ? cost.usd / (costPerMin / 60) : null;
+
   return (
     <aside className="col right trace-drawer" id="agent-trace-drawer" aria-label="Agent trace">
       <div className="colhead">
@@ -97,6 +113,33 @@ export default function TracePanel({ trace, liveSteps, diagnosis, onClose }) {
           </svg>
         </button>
       </div>
+
+      {cost && cost.requests > 0 && (
+        <div className="trace-cost">
+          <div className="trace-cost-head">
+            <span className="trace-cost-usd">{money(cost.usd)}</span>
+            <span className="trace-cost-label">to diagnose this incident</span>
+          </div>
+          <div className="trace-cost-detail">
+            {cost.total_tokens.toLocaleString()} tokens · {cost.requests} model call
+            {cost.requests === 1 ? "" : "s"}
+            {trace?.elapsed_ms != null && <> · {(trace.elapsed_ms / 1000).toFixed(1)}s</>} ·{" "}
+            <span className="mono">{cost.model}</span>
+          </div>
+          {bleedSeconds != null && (
+            <div className="trace-cost-contrast">
+              The incident was losing <b>{usd(costPerMin)}/min</b> — this diagnosis cost about{" "}
+              <b>{bleedSeconds < 1 ? "under a second" : `${Math.round(bleedSeconds)}s`}</b> of that
+              bleed.
+            </div>
+          )}
+          {cost.usd == null && (
+            <div className="trace-cost-contrast muted">
+              No price configured for this model — token counts only.
+            </div>
+          )}
+        </div>
+      )}
 
       {source === "deterministic_fallback" && diagnosis?.fallback_reason && (
         <div className="trace fallback">
