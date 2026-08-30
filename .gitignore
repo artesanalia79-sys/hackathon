@@ -12,3 +12,5 @@ ui/dist/
 .pytest_cache/
 .ruff_cache/
 hackaton-docs/
+.vercel
+
