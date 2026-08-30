@@ -130,6 +130,8 @@ def case_19c_invalid_json() -> Result:
     ])
     if diag.source != "deterministic_fallback":
         return FAIL, "an out-of-range confidence was accepted"
+    if run_obj.alert_decision is not None:
+        return FAIL, "an invalid conclusion was treated as an alert decision"
     return PASS, f"rejected on schema ({run_obj.status}), deterministic diagnosis shown"
 
 
@@ -203,6 +205,50 @@ def case_19f_placeholder_scope() -> Result:
     return PASS, f"scope cleaned to {scope}"
 
 
+def case_29_agent_sends_slack() -> Result:
+    """A confirmed incident is raised by the agent once, in its own words."""
+    from api.notify import slack
+
+    delivered: list[dict] = []
+    real_url, real_send = slack.SLACK_WEBHOOK_URL, slack.send
+
+    async def capture(payload: dict) -> bool:
+        delivered.append(payload)
+        return True
+
+    # This is only a non-empty sentinel. `slack.send` is replaced by `capture` below,
+    # so the test never performs a network request or uses a real webhook.
+    slack.SLACK_WEBHOOK_URL = "https://example.invalid/slack-webhook"
+    slack.send = capture
+    try:
+        (diag, run_obj), _run, rec = _run_with([
+            _out(_call("get_incident_summary", {}, "call_1")),
+            _out(_call("send_slack_alert", {
+                "headline": "dLocal is degrading approvals in Brazil; reroute now",
+                "urgency": "page",
+            }, "call_2")),
+            _out(_call("conclude", dict(VALID_CONCLUDE,
+                                         evidence=[{"tool_call_id": "call_1",
+                                                    "claim": "the incident is isolated to dLocal in Brazil"}]),
+                       "call_3")),
+        ])
+    finally:
+        slack.SLACK_WEBHOOK_URL, slack.send = real_url, real_send
+
+    if diag.source != "agent":
+        return FAIL, f"valid alerting run was rejected: {diag.fallback_reason}"
+    if len(delivered) != 1:
+        return FAIL, f"expected one direct Slack send, got {len(delivered)}"
+    if rec.alerted_by != "agent" or run_obj.alert_decision != "sent":
+        return FAIL, f"alert was not recorded as agent-raised: {rec.alerted_by}/{run_obj.alert_decision}"
+    slack_steps = [s for s in run_obj.steps if s.get("tool") == "send_slack_alert"]
+    if len(slack_steps) != 1 or slack_steps[0].get("alert_sent") is not True:
+        return FAIL, "agent trace does not record Slack's successful delivery"
+    if "Raised by the diagnosis agent" not in str(delivered[0].get("blocks")):
+        return FAIL, "Slack payload does not identify the diagnosis agent"
+    return PASS, "agent sent one Slack alert and the completed run recorded it"
+
+
 AGENT_CASES = [
     ("19", "Agent answers in prose -> fallback", case_19a_prose),
     ("19b", "Agent times out -> fallback", case_19b_timeout),
@@ -211,4 +257,5 @@ AGENT_CASES = [
     ("19e", "Uncertainty reported with high confidence is capped", case_19e_uncertain_but_confident),
     ("19f", "Placeholder scope dimensions are stripped", case_19f_placeholder_scope),
     ("20", "Agent cites evidence it never gathered -> rejected", case_20_unsupported_evidence),
+    ("29", "Agent raises one Slack alert for a confirmed incident", case_29_agent_sends_slack),
 ]

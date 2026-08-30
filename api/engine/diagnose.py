@@ -17,7 +17,8 @@ from api.domain import (
 )
 from api.engine.incidents import IncidentRecord
 from api.engine.memory import find_similar_incidents
-from api.engine.signature import CAUSE_LABEL, RECOMMENDATION
+from api.engine.playbook import build as build_playbook
+from api.engine.signature import CAUSE_LABEL
 
 MERCHANT_NAMES = {"m_fastcart": "FastCart", "m_streamly": "Streamly", "m_viajesya": "ViajesYa"}
 
@@ -130,7 +131,7 @@ def deterministic_diagnosis(detector, rec: IncidentRecord,
                             reason: str | None = None) -> Diagnosis:
     similar = find_similar_incidents(detector, rec)
     merchants = affected_merchants(detector, rec)
-    action, rationale = RECOMMENDATION.get(rec.cause_type or "", RECOMMENDATION["insufficient_evidence"])
+    action, rationale = build_playbook(detector, rec, rec.last_seen_at)
     events = [e for e in detector.change_events if e.id in set(rec.related_change_event_ids)]
     return Diagnosis(
         incident_id=rec.id,

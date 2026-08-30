@@ -42,6 +42,7 @@ class World:
         self._task: asyncio.Task | None = None
         self._diagnoser: asyncio.Task | None = None
         self.agent_runs: dict[str, dict] = {}      # incident id -> serialised AgentRun
+        self.slack_sent: set[str] = set()          # incident ids already alerted on
         self._lock = asyncio.Lock()
         self.listeners: set[asyncio.Queue] = set()
         self.tick_cost_ms: float = 0.0
@@ -153,6 +154,7 @@ class World:
         self.injector.reset()
         self.detector.reset()
         self.agent_runs.clear()
+        self.slack_sent.clear()
         self.cube.clear_live()
         self.recent_tx.clear()
         self.generator = Generator(self.injector, seed=self.seed)
@@ -220,6 +222,11 @@ class World:
                     self.agent_runs[rec.id] = run.to_json()
                 self.publish({"type": "diagnosis", "incident_id": rec.id,
                               "source": diagnosis.source})
+                if rec.alerted_at is not None:
+                    self.slack_sent.add(rec.id)   # the agent raised it; record it as sent
+                    self.publish({"type": "alert", "incident_id": rec.id,
+                                  "channel": "slack", "sent": True,
+                                  "raised_by": rec.alerted_by})
 
     async def _loop(self) -> None:
         """Wall clock -> simulated minutes. Generation runs off-thread so SSE stays smooth.

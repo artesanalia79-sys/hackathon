@@ -75,4 +75,15 @@ AGENT_CONFIDENCE_HEADROOM = 0.05
 # diagnosis is already on the card before the agent starts, and the agent upgrades it.
 AGENT_TIMEOUT_S = float(os.getenv("CT_AGENT_TIMEOUT_S", "40"))
 
+# --- slack alerts -----------------------------------------------------------
+# Empty webhook = alerting off, the same way an empty OPENAI_API_KEY turns the agent off.
+# Nothing is attempted, nothing is logged, nothing fails.
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+SLACK_TIMEOUT_S = float(os.getenv("CT_SLACK_TIMEOUT_S", "5"))
+# A confirmed incident under this rate is real but not worth waking anyone for. 0 alerts
+# on everything confirmed.
+SLACK_ALERT_MIN_COST_PER_MIN = float(os.getenv("CT_SLACK_MIN_COST_PER_MIN", "0"))
+# Used to build the "Open incident" button. Empty = no button.
+PUBLIC_BASE_URL = os.getenv("CT_PUBLIC_BASE_URL", "").strip()
+
 SEED = int(os.getenv("CT_SEED", "20260829"))

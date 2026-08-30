@@ -909,6 +909,17 @@ table.kv td.n {
 .trace pre.args {
   max-height: 90px;
 }
+.slack-result {
+  margin-top: 7px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.slack-result.sent {
+  color: var(--ok);
+}
+.slack-result.failed {
+  color: var(--bad);
+}
 
 /* ---------- Yuno visual system ---------- */
 :root {

@@ -38,6 +38,7 @@ from api.domain import (
 from api.engine.diagnose import affected_merchants, deterministic_diagnosis, scope_phrase
 from api.engine.incidents import IncidentRecord
 from api.engine.memory import find_similar_incidents
+from api.engine.playbook import build as build_playbook
 
 RESULT_PREVIEW_CHARS = 900
 
@@ -56,6 +57,9 @@ class AgentRun:
         self.handles: dict[str, str] = {}
         self.status = "running"
         self.error: str | None = None
+        # The completed agent's explicit Slack decision, kept in the trace so the UI can
+        # distinguish an alert it sent from one it deliberately chose not to send.
+        self.alert_decision: str | None = None
         self.started = time.monotonic()
 
     def record(self, kind: str, **fields) -> dict:
@@ -76,6 +80,7 @@ class AgentRun:
     def to_json(self) -> dict:
         return {"incident_id": self.incident_id, "status": self.status,
                 "error": self.error, "steps": self.steps,
+                "alert_decision": self.alert_decision,
                 "elapsed_ms": round(self.elapsed * 1000)}
 
 
@@ -124,6 +129,10 @@ async def run_agent(detector, rec: IncidentRecord, now: datetime,
             except Exception:
                 pass
 
+    from api.notify import slack as _slack
+    slack_on = _slack.enabled()
+    alert_prompted = False
+
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(AGENT_TIMEOUT_S)) as client:
             for step in range(AGENT_MAX_STEPS):
@@ -162,11 +171,58 @@ async def run_agent(detector, rec: IncidentRecord, now: datetime,
                                         arguments={}, error=f"unparsable arguments: {exc}"))
 
                     if name == "conclude":
-                        return _finish_conclude(detector, rec, run, args, call_id, emit)
+                        # Telling the model to alert before concluding is not enough on its
+                        # own — it reads `conclude` as the finish line and goes straight
+                        # there. So the decision is made structural: the first time it tries
+                        # to land a nameable cause without having decided about the alert,
+                        # it gets the turn back. Once. Concluding again *is* the decision
+                        # not to alert, and we let it stand.
+                        needs_alert_call = (slack_on and not box.alerted
+                                            and not alert_prompted
+                                            and args.get("root_cause_type")
+                                            not in (None, "", "insufficient_evidence"))
+                        if needs_alert_call:
+                            alert_prompted = True
+                            emit(run.record("alert_decision_requested", tool_call_id=call_id))
+                            messages.append({"role": "user", "content":
+                                             "Before you conclude: you have named a cause, and "
+                                             "nobody outside this system knows about it yet. "
+                                             "Call `send_slack_alert` if an operator should act "
+                                             "on this now, then conclude. If this genuinely does "
+                                             "not warrant interrupting anyone, just call "
+                                             "`conclude` again and it will stand."})
+                            continue
+                        diagnosis, finished_run = _finish_conclude(
+                            detector, rec, run, args, call_id, emit, now)
+                        # A malformed or unsupported conclusion is a failed run, not a
+                        # decision to suppress the safety-net alert. Record a decision
+                        # only once its conclusion has passed all validation.
+                        if finished_run.status in ("concluded", "insufficient_evidence"):
+                            if slack_on:
+                                finished_run.alert_decision = "sent" if box.alerted else "declined"
+                                emit(finished_run.record("alert_decision",
+                                                         decision=finished_run.alert_decision,
+                                                         tool_call_id=call_id))
+                            else:
+                                finished_run.alert_decision = "not_configured"
+                        return diagnosis, finished_run
                     if name == "insufficient_evidence":
+                        # An agent that cannot support a cause has explicitly chosen not
+                        # to interrupt a human. Do not turn that into a generic page later.
+                        run.alert_decision = "declined" if slack_on else "not_configured"
+                        emit(run.record("alert_decision", decision=run.alert_decision,
+                                        tool_call_id=call_id))
                         return _finish_insufficient(detector, rec, run, args, call_id, emit)
 
-                    result = box.call(name, args)
+                    # The one tool that reaches outside this process is awaited rather
+                    # than run through the sync dispatcher, so a slow webhook cannot block
+                    # the event loop the rest of the simulation is running on.
+                    if name == "send_slack_alert":
+                        result = await box.send_slack_alert(
+                            headline=args.get("headline", ""),
+                            urgency=args.get("urgency", "notify"))
+                    else:
+                        result = box.call(name, args)
                     handle = run.handle_for(call_id)
                     run.call_ids.add(handle)
                     run.call_ids.add(call_id)
@@ -177,7 +233,14 @@ async def run_agent(detector, rec: IncidentRecord, now: datetime,
                     emit(run.record("tool_call", tool=name, tool_call_id=handle, arguments=args,
                                     tool_description=TOOL_SUMMARY.get(name, ""),
                                     result_preview=blob[:RESULT_PREVIEW_CHARS],
-                                    truncated=len(blob) > RESULT_PREVIEW_CHARS))
+                                    truncated=len(blob) > RESULT_PREVIEW_CHARS,
+                                    # Keep the delivery result as a first-class trace field.
+                                    # The UI should not have to parse a preview string to tell
+                                    # an operator whether Slack actually accepted the alert.
+                                    alert_sent=(result.get("sent") if name == "send_slack_alert"
+                                                else None),
+                                    alert_note=(result.get("note") or result.get("error"))
+                                    if name == "send_slack_alert" else None))
                     messages.append(call)
                     messages.append({"type": "function_call_output", "call_id": call_id,
                                      "output": blob[:12000]})
@@ -245,7 +308,8 @@ def _money_in_prose(concl) -> str | None:
     return None
 
 
-def _finish_conclude(detector, rec, run: AgentRun, args: dict, call_id: str, emit) -> tuple:
+def _finish_conclude(detector, rec, run: AgentRun, args: dict, call_id: str, emit,
+                     now: datetime) -> tuple:
     """Validate, then let the agent's words in — but never its numbers."""
     try:
         concl = AgentConclusion.model_validate(args)
@@ -285,8 +349,12 @@ def _finish_conclude(detector, rec, run: AgentRun, args: dict, call_id: str, emi
     # `conclude(root_cause="insufficient_evidence")` and the dedicated tool are the same
     # answer arriving by two doors. Route them to the same place: "I cannot tell, with 90%
     # confidence" is not a reading anyone should be shown on an incident card.
-    recommendation = Recommendation(action=concl.recommended_action,
-                                    rationale=concl.recommendation_rationale)
+    # Same rule as money: the agent decides *what* is broken, the engine says what to do
+    # about it. "Reroute away from this provider" is a sentence anyone can write; naming
+    # the provider that is currently healthy enough to take the traffic, with its rate and
+    # its sample, is a calculation — and the agent has no tool that returns it.
+    action, rationale = build_playbook(detector, rec, now, cause=concl.root_cause_type)
+    recommendation = Recommendation(action=action, rationale=rationale)
     confidence = round(concl.confidence, 2)
     # The agent reads the engine's evidence; it cannot be surer of the answer than the
     # engine that produced it. Without this ceiling the card showed a 1.0 sitting on top
