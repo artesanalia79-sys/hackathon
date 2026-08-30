@@ -66,6 +66,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip()
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
 AGENT_MAX_STEPS = 10
+# How much surer than the engine the agent is allowed to be. It reads the engine's own
+# evidence, so it cannot legitimately be much more certain than the engine that produced
+# it; a little headroom covers the case where its extra tool calls did corroborate.
+AGENT_CONFIDENCE_HEADROOM = 0.05
 # A real run against gpt-4.1-mini takes ~12s over 7 round trips. The 15s in the spec
 # left no headroom on a slow network. This costs nothing perceptually: the deterministic
 # diagnosis is already on the card before the agent starts, and the agent upgrades it.

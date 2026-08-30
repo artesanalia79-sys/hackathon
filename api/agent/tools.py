@@ -62,14 +62,14 @@ class ToolBox:
             "observed_rate": round(rec.observed_rate, 4),
             "expected_rate": round(rec.expected_rate, 4),
             "excess_declines_in_window": round(rec.excess_declines, 1),
-            "cost_per_min_usd": round(rec.cost_per_min_usd, 2),
-            "cost_so_far_usd": round(rec.cost_usd, 2),
             "attribution": rec.attribution_json,
             "signature": rec.signature_json,
             "engine_hypothesis": rec.cause_type,
             "engine_reasons": rec.reasons,
             "note": "The engine's hypothesis is a starting point, not an answer. "
-                    "Check it against the other tools.",
+                    "Check it against the other tools. Money is deliberately not in "
+                    "this payload: the engine prices the incident and the card shows "
+                    "that figure. Never state an amount of money in your own words.",
         }
 
     def slice_metrics(self, scope: dict | None = None, minutes: int | None = None) -> dict:
@@ -79,9 +79,11 @@ class ToolBox:
         if exp.observed.attempts == 0:
             return {"scope": sc, "minutes": m, "attempts": 0,
                     "note": "no traffic matched this scope in the window"}
+        observed = agg_to_json(exp.observed)
+        observed.pop("avg_ticket_usd", None)   # the agent has no business quoting money
         return {
             "scope": sc, "minutes": m,
-            **agg_to_json(exp.observed),
+            **observed,
             "expected_rate": round(exp.p0, 4),
             "seasonal_rate": round(exp.seasonal_rate, 4) if exp.seasonal_rate is not None else None,
             "recent_baseline_rate": round(exp.ewma_rate, 4) if exp.ewma_rate is not None else None,
@@ -150,7 +152,8 @@ class ToolBox:
                 "count": len(rows)}
 
     def find_similar_incidents(self) -> dict:
-        matches = find_similar_incidents(self.detector, self.rec)
+        matches = [{k: v for k, v in m.items() if k != "cost_usd"}
+                   for m in find_similar_incidents(self.detector, self.rec)]
         return {"matches": matches, "count": len(matches),
                 "note": "similarity is 0.5 scope + 0.3 same cause + 0.2 same decline signature"}
 
