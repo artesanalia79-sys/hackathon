@@ -1,7 +1,14 @@
-export const get = (path) => fetch(path).then((r) => r.json());
+// Where the simulator lives. Empty means "same origin", which is what `make run`
+// and `vite dev` both serve — set VITE_API_BASE only when the UI is hosted apart
+// from the API, as it is on a static host like Vercel.
+export const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/+$/, "");
+
+export const apiUrl = (path) => `${API_BASE}${path}`;
+
+export const get = (path) => fetch(apiUrl(path)).then((r) => r.json());
 
 export const post = (path, body) =>
-  fetch(path, {
+  fetch(apiUrl(path), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),

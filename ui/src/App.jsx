@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { get, post, pct, usd } from "./api.js";
+import { apiUrl, get, post, pct, usd } from "./api.js";
 import IncidentCard from "./components/IncidentCard.jsx";
 import IncidentList from "./components/IncidentList.jsx";
 import InjectPanel from "./components/InjectPanel.jsx";
@@ -93,7 +93,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const es = new EventSource("/api/stream");
+    const es = new EventSource(apiUrl("/api/stream"));
     es.addEventListener("snapshot", (e) => setSnap(JSON.parse(e.data)));
     es.addEventListener("speed", (e) => setSpeed(JSON.parse(e.data).sim_speed));
     es.addEventListener("trace", (e) => {

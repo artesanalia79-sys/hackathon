@@ -1,0 +1,17 @@
+# The image needs pyproject.toml, uv.lock and api/ — nothing else.
+# Keeping the build context small also keeps `railway up` uploads fast.
+.venv/
+__pycache__/
+*.pyc
+.git/
+.ruff_cache/
+.pytest_cache/
+ui/
+eval/
+docs/
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+*.md
