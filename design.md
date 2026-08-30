@@ -229,47 +229,6 @@ Only one or a small number of KPIs should use Yuno Blue for emphasis. Most numer
 
 ---
 
-# 5. Yuno Naming and Brand Assets
-
-## 5.1 Naming
-
-Always write the brand as **Yuno** in interface copy and documentation.
-
-Avoid inconsistent alternatives such as:
-
-- yuno
-- YUNO
-- YuNo
-
-unless they appear inside an approved brand asset.
-
-## 5.2 Wordmark and logomark
-
-Prefer the **Yuno wordmark** when there is sufficient horizontal space.
-
-Use the **Yuno logomark** in compact areas such as the narrow sidebar shown in the references.
-
-Use the standalone icon only in very compact identity contexts.
-
-## 5.3 Asset integrity
-
-Official Yuno marks should remain visually untouched.
-
-Do not:
-
-- Stretch them
-- Rotate them
-- Add shadows
-- Add outlines
-- Crop them awkwardly
-- Recolor them outside approved treatments
-- Combine them with unrelated marks
-- Recreate them manually
-
-Give brand assets enough clear space to remain visually distinct.
-
----
-
 # 6. Overall Application Shell
 
 The interface uses a classic enterprise dashboard structure:
@@ -367,33 +326,6 @@ Recommended page padding:
 Avoid placing operational content inside a narrow marketing-style centered container.
 
 The layout should feel horizontal, spacious, and optimized for data scanning on desktop screens.
-
----
-
-# 10. Page Structure
-
-A typical page should visually follow this rhythm:
-
-1. Page title
-2. Horizontal tab navigation
-3. Filter and action controls
-4. Main analytical cards, tables, or comparison panels
-
-Example hierarchy:
-
-```text
-Payments
-
-All payments   All transactions   Fraud screening   All payouts
-───────────────────────────────────────────────────────────────
-
-[ Search ]                                      [Refresh] [Export]
-[Add filter]   No filters applied
-
-[ Main table ]
-```
-
-Keep larger vertical spacing around page-level groups and tighter spacing within a single functional group.
 
 ---
 
@@ -681,32 +613,6 @@ Status colors are functional and should remain secondary to Yuno Blue as the bra
 
 ---
 
-# 19. Provider and Payment Method Identity
-
-Provider rows may include a small logo or branded icon before the provider name.
-
-Recommended visual scale:
-
-- Icon around `18px`
-- Approximately `8–10px` gap before provider name
-- Compact and aligned to text baseline
-
-Provider identity should improve scanning without dominating the row.
-
-Reference examples include:
-
-- PayPal
-- dLocal
-- Mercado Pago
-- Adyen
-- Unlimint
-- Thunes
-- Terrapay
-
-Payment methods such as card may use a similarly compact symbol.
-
----
-
 # 20. Reconciliation / Comparison Cards
 
 Operational reconciliation views may use two side-by-side cards on large screens.
@@ -929,11 +835,8 @@ When creating a new screen in this visual system:
 20. Avoid marketing-style hero sections.
 21. Avoid excessive animation.
 22. Avoid overly colorful charts or cards.
-23. Always spell the brand **Yuno**.
-24. Use the official Yuno wordmark when space allows and the logomark in compact navigation.
-25. Do not distort or recreate official brand assets.
-26. Treat `#FAFAFA` as a product surface, not as an official brand color.
-27. Status colors may use green, amber, or red, but these remain functional colors rather than brand colors.
+23. Treat `#FAFAFA` as a product surface, not as an official brand color.
+24. Status colors may use green, amber, or red, but these remain functional colors rather than brand colors.
 
 ---
 
