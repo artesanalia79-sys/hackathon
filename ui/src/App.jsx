@@ -3,9 +3,24 @@ import { get, post, pct, usd } from "./api.js";
 import IncidentCard from "./components/IncidentCard.jsx";
 import IncidentList from "./components/IncidentList.jsx";
 import InjectPanel from "./components/InjectPanel.jsx";
+import Resizer from "./components/Resizer.jsx";
 import SpeedControl from "./components/SpeedControl.jsx";
 import TracePanel from "./components/TracePanel.jsx";
 import TrafficPanel from "./components/TrafficPanel.jsx";
+
+// Panel widths are the operator's, not ours: they survive a reload.
+const COLS_KEY = "ct.columns";
+const COL_DEFAULT = { left: 330, right: 350 };
+const COL_LIMITS = { left: { min: 220, max: 560 }, right: { min: 260, max: 620 } };
+
+const readCols = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLS_KEY));
+    return saved && typeof saved === "object" ? { ...COL_DEFAULT, ...saved } : COL_DEFAULT;
+  } catch {
+    return COL_DEFAULT;
+  }
+};
 
 const TABS = [
   { id: "incidents", label: "Incidents" },
@@ -58,6 +73,7 @@ export default function App() {
   const [trace, setTrace] = useState(null);
   const [liveSteps, setLiveSteps] = useState([]);
   const [showClosed, setShowClosed] = useState(false);
+  const [cols, setCols] = useState(readCols);
   const selectedRef = useRef(null);
   selectedRef.current = selected;
 
@@ -82,6 +98,17 @@ export default function App() {
     });
     return () => es.close();
   }, [loadIncident]);
+
+  useEffect(() => {
+    try { localStorage.setItem(COLS_KEY, JSON.stringify(cols)); } catch { /* private mode */ }
+  }, [cols]);
+
+  const resizeCol = useCallback((side, px) => setCols((c) => ({ ...c, [side]: px })), []);
+  const toggleCol = useCallback((side) => setCols((c) => ({
+    ...c,
+    [side]: c[side] === 0 ? c[`${side}Prev`] || COL_DEFAULT[side] : 0,
+    [`${side}Prev`]: c[side] || c[`${side}Prev`] || COL_DEFAULT[side],
+  })), []);
 
   useEffect(() => {
     get("/api/catalog").then(setCatalog);
@@ -187,7 +214,10 @@ export default function App() {
 
         <main className="content">
           {tab === "incidents" && (
-            <div className="main">
+            <div
+              className={`main${cols.left === 0 ? " left-folded" : ""}${cols.right === 0 ? " right-folded" : ""}`}
+              style={{ "--left-w": `${cols.left}px`, "--right-w": `${cols.right}px` }}
+            >
               <IncidentList
                 incidents={snap?.incidents || []}
                 selected={selected}
@@ -195,9 +225,25 @@ export default function App() {
                 showClosed={showClosed}
                 onToggleClosed={() => setShowClosed((v) => !v)}
               />
+              <Resizer
+                side="left"
+                label="the incident list"
+                width={cols.left}
+                {...COL_LIMITS.left}
+                onResize={(px) => resizeCol("left", px)}
+                onToggle={() => toggleCol("left")}
+              />
               <div className="col scroll">
                 <IncidentCard incident={incident} diagnosis={diagnosis} onAck={ack} />
               </div>
+              <Resizer
+                side="right"
+                label="the agent trace"
+                width={cols.right}
+                {...COL_LIMITS.right}
+                onResize={(px) => resizeCol("right", px)}
+                onToggle={() => toggleCol("right")}
+              />
               <TracePanel trace={trace} liveSteps={liveSteps} diagnosis={diagnosis} />
             </div>
           )}

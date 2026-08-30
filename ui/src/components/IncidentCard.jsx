@@ -1,7 +1,8 @@
 import React from "react";
-import { CAUSE_LABEL, clock, pct, scopeText, usd } from "../api.js";
+import { CAUSE_LABEL, clock, pct, usd } from "../api.js";
 import Baseline from "./Baseline.jsx";
 import Chart from "./Chart.jsx";
+import { ScopeChips, ScopeProse } from "./Scope.jsx";
 import Signature from "./Signature.jsx";
 
 function Tile({ k, v, s, tone }) {
@@ -36,17 +37,40 @@ export default function IncidentCard({ incident, diagnosis, onAck }) {
   const attribution = incident.detail?.attribution?.[0];
   const path = attribution?.path || [];
   const isDrop = incident.kind === "conversion_drop";
+  const live = incident.status === "watching" || incident.status === "confirmed";
 
   return (
     <div className="col">
       <div className="card">
-        <h2>{CAUSE_LABEL[incident.cause_type] || incident.cause_type || "Unclassified incident"}</h2>
-        <div className="sub">
-          {scopeText(incident.scope)} · since {clock(incident.started_at)} ·{" "}
-          {Math.round(incident.detail?.duration_min ?? 0)} min ·{" "}
-          <span className={`badge ${incident.status}`}>{incident.status}</span>
-          {incident.acknowledged_by && <> · ack by {incident.acknowledged_by}</>}
-        </div>
+        <header className={`inchead ${incident.status}`}>
+          <div className="inchead-tags">
+            <span className={`badge ${incident.status}`}>
+              {live && <i className="dot" />}
+              {incident.status}
+            </span>
+            {!isDrop && <span className="badge kind">{incident.kind.replace(/_/g, " ")}</span>}
+            {incident.acknowledged_by && (
+              <span className="badge ack">ack · {incident.acknowledged_by}</span>
+            )}
+          </div>
+
+          <h2>{CAUSE_LABEL[incident.cause_type] || incident.cause_type || "Unclassified incident"}</h2>
+
+          <ScopeChips scope={incident.scope} />
+
+          <div className="inchead-meta">
+            <span>
+              Started <b>{clock(incident.started_at)}</b>
+            </span>
+            <span>
+              {live ? "Running for" : "Lasted"}{" "}
+              <b>{Math.round(incident.detail?.duration_min ?? 0)} min</b>
+            </span>
+            <span className="bleed">
+              <b>{usd(incident.cost_per_min_usd)}</b>/min
+            </span>
+          </div>
+        </header>
 
         <div className="grid4">
           <Tile
@@ -68,7 +92,9 @@ export default function IncidentCard({ incident, diagnosis, onAck }) {
         {d?.exec_line && (
           <div className="section">
             <h3>For the executive</h3>
-            <div className="box exec">{d.exec_line}</div>
+            <div className="box exec">
+              <ScopeProse text={d.exec_line} />
+            </div>
           </div>
         )}
 
@@ -102,7 +128,9 @@ export default function IncidentCard({ incident, diagnosis, onAck }) {
         {d?.ops_explanation && (
           <div className="section">
             <h3>For the operations engineer</h3>
-            <div className="box ops">{d.ops_explanation}</div>
+            <div className="box ops">
+              <ScopeProse text={d.ops_explanation} />
+            </div>
           </div>
         )}
 

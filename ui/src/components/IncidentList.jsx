@@ -1,5 +1,6 @@
 import React from "react";
-import { CAUSE_LABEL, clock, scopeText, usd } from "../api.js";
+import { CAUSE_LABEL, clock, usd } from "../api.js";
+import { ScopeChips } from "./Scope.jsx";
 
 export default function IncidentList({ incidents, selected, onSelect, showClosed, onToggleClosed }) {
   const open = incidents.filter((i) => i.status === "watching" || i.status === "confirmed");
@@ -41,7 +42,7 @@ export default function IncidentList({ incidents, selected, onSelect, showClosed
               <span className="money">{usd(i.cost_per_min_usd)}/min</span>
             </div>
             <div className="cause">{CAUSE_LABEL[i.cause_type] || i.cause_type || "unclassified"}</div>
-            <div className="scope">{scopeText(i.scope)}</div>
+            <ScopeChips scope={i.scope} compact />
             <div className="meta">
               <span>since {clock(i.started_at)}</span>
               <span>{Math.round(i.detail?.duration_min ?? 0)} min</span>
