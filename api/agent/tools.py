@@ -207,7 +207,7 @@ class ToolBox:
         payload = slack.build_agent_message(self.rec, headline, urgency,
                                             self.rec.diagnosis, PUBLIC_BASE_URL,
                                             action, rationale)
-        sent = await slack.send(payload)
+        sent = await slack.deliver(payload, self.rec.id)
         if sent:
             self.alerted = True
             self.rec.alerted_at = self.now

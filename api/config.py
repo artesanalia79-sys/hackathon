@@ -109,4 +109,19 @@ SLACK_ALERT_MIN_COST_PER_MIN = float(os.getenv("CT_SLACK_MIN_COST_PER_MIN", "0")
 # Used to build the "Open incident" button. Empty = no button.
 PUBLIC_BASE_URL = os.getenv("CT_PUBLIC_BASE_URL", "").strip()
 
+# --- slack, the other direction: people asking us things ---------------------
+# A bot token (xoxb-...) is what lets us *reply*. An incoming webhook can only fire
+# one-way messages into one channel; it cannot answer anyone and cannot open a thread.
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
+# Slack signs every event it sends us. Without the secret we cannot tell a real event
+# from anyone on the internet who found the URL, so no secret means the endpoint refuses
+# to act — see api/notify/slack_events.py.
+SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "").strip()
+SLACK_API_BASE = os.getenv("CT_SLACK_API_BASE", "https://slack.com/api").rstrip("/")
+# The channel alerts go to when posting through the bot token instead of the webhook.
+SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "").strip()
+# A question costs a model call, so it gets its own, shorter budget than a diagnosis.
+ASK_MAX_STEPS = int(os.getenv("CT_ASK_MAX_STEPS", "8"))
+ASK_TIMEOUT_S = float(os.getenv("CT_ASK_TIMEOUT_S", "45"))
+
 SEED = int(os.getenv("CT_SEED", "20260829"))
